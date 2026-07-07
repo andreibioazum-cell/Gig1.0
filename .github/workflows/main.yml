@@ -21,7 +21,7 @@ jobs:
         import os, re
         def compile_cubic(file_path):
             if not os.path.exists(file_path): return ""
-            with open(file_path, 'r') as f: lines = f.readlines()
+            with open(file_path, 'r', encoding='utf-8') as f: lines = f.readlines()
             cpp_code = ""
             for line in lines:
                 line = line.strip()
@@ -81,47 +81,60 @@ jobs:
         EOF
         python3 transpiler.py
 
-    - name: Build Multi-Arch
+    - name: Build Libraries
       run: |
         TC=$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin
         GLUE=$ANDROID_NDK_ROOT/sources/android/native_app_glue
         FLAGS="-shared -fPIC -I$GLUE -landroid -llog -lGLESv2 -lEGL"
+        
+        # Компилируем для arm64-v8a
+        $TC/aarch64-linux-android24-clang -c $GLUE/android_native_app_glue.c -o glue64.o -I$GLUE
+        $TC/aarch64-linux-android24-clang++ generated_main.cpp glue64.o $FLAGS -o libmain64.so
 
-        # Сборка для arm64-v8a (64-bit)
-        $TC/aarch64-linux-android21-clang -c $GLUE/android_native_app_glue.c -o glue64.o -I$GLUE
-        $TC/aarch64-linux-android21-clang++ generated_main.cpp glue64.o $FLAGS -o libmain64.so
+        # Компилируем для armeabi-v7a
+        $TC/armv7a-linux-androideabi24-clang -c $GLUE/android_native_app_glue.c -o glue32.o -I$GLUE
+        $TC/armv7a-linux-androideabi24-clang++ generated_main.cpp glue32.o $FLAGS -o libmain32.so
 
-        # Сборка для armeabi-v7a (32-bit)
-        $TC/armv7a-linux-androideabi21-clang -c $GLUE/android_native_app_glue.c -o glue32.o -I$GLUE
-        $TC/armv7a-linux-androideabi21-clang++ generated_main.cpp glue32.o $FLAGS -o libmain32.so
-
-    - name: Package APK
+    - name: Final Packaging (Android 14 strict)
       run: |
         mkdir -p staging/lib/arm64-v8a staging/lib/armeabi-v7a
         cp libmain64.so staging/lib/arm64-v8a/libmain.so
         cp libmain32.so staging/lib/armeabi-v7a/libmain.so
         
+        # Манифест с полными требованиями Android 14
         cat << 'EOF' > AndroidManifest.xml
-        <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.cubic.lang">
-          <uses-sdk android:minSdkVersion="21" android:targetSdkVersion="34" />
-          <application android:label="CubicApp" android:hasCode="false">
-            <activity android:name="android.app.NativeActivity" android:configChanges="orientation|keyboardHidden|screenSize">
-              <meta-data android:name="android.app.lib_name" android:value="main" />
-              <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-              </intent-filter>
-            </activity>
-          </application>
+        <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.cubic.game" android:versionCode="1" android:versionName="1.0">
+            <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="34" />
+            <application android:label="CubicBattleX" android:hasCode="false" android:extractNativeLibs="true">
+                <activity android:name="android.app.NativeActivity" 
+                          android:configChanges="orientation|keyboardHidden|screenSize|screenLayout"
+                          android:exported="true">
+                    <meta-data android:name="android.app.lib_name" android:value="main" />
+                    <intent-filter>
+                        <action android:name="android.intent.action.MAIN" />
+                        <category android:name="android.intent.category.LAUNCHER" />
+                    </intent-filter>
+                </activity>
+            </application>
         </manifest>
         EOF
 
         BT=$ANDROID_HOME/build-tools/34.0.0
-        $BT/aapt package -f -M AndroidManifest.xml -I $ANDROID_HOME/platforms/android-34/android.jar -F unsigned.apk staging/
-        keytool -genkey -v -keystore d.ks -storepass android -alias a -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=X" || true
-        $BT/apksigner sign --ks d.ks --ks-pass pass:android --out CubicProject.apk unsigned.apk
+        
+        # 1. Упаковка без сжатия библиотек (важно для Android 14)
+        $BT/aapt package -f -M AndroidManifest.xml -I $ANDROID_HOME/platforms/android-34/android.jar -F unsorted.apk staging/
+        
+        # 2. Выравнивание
+        $BT/zipalign -p -f -v 4 unsorted.apk aligned.apk
+        
+        # 3. Генерация ключа (если нет)
+        keytool -genkey -v -keystore my.keystore -alias cubic -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Cubic,O=Dev,C=US" -storepass 123456 -keypass 123456 || true
+        
+        # 4. Подпись всеми схемами (V1, V2, V3, V4 - критично для Android 14)
+        $BT/apksigner sign --ks my.keystore --ks-pass pass:123456 --ks-key-alias cubic --out CubicBattleX.apk aligned.apk
 
-    - uses: actions/upload-artifact@v4
+    - name: Upload APK
+      uses: actions/upload-artifact@v4
       with:
-        name: CubicLanguageApp
-        path: CubicProject.apk
+        name: CubicBattleX-Android14
+        path: CubicBattleX.apk
