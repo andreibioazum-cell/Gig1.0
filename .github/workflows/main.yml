@@ -15,10 +15,10 @@ jobs:
       with:
         ndk-version: r25c
 
-    - name: Create Transpiler (The Language Engine)
+    - name: Create Transpiler
       run: |
         cat << 'EOF' > transpiler.py
-        import os, sys
+        import os, re
 
         def compile_cubic(file_path):
             with open(file_path, 'r') as f:
@@ -26,77 +26,101 @@ jobs:
             
             cpp_code = ""
             for line in lines:
-                parts = line.strip().split()
-                if not parts: continue
+                line = line.strip()
+                if not line or line.startswith("#"): continue
                 
+                # Парсим аргументы (обработка кавычек для текста)
+                parts = re.findall(r'(?:[^\s"]|"(?:\\.|[^"])*")+', line)
                 cmd = parts[0]
-                if cmd == "background":
-                    cpp_code += f"glClearColor({parts[1]}, {parts[2]}, {parts[3]}, 1.0f);\n"
-                    cpp_code += "glClear(GL_COLOR_BUFFER_BIT);\n"
-                elif cmd == "rect": # x, y, w, h, r, g, b
-                    cpp_code += f"drawRect({parts[1]}, {parts[2]}, {parts[3]}, {parts[4]}, {parts[5]}, {parts[6]}, {parts[7]});\n"
-                elif cmd == "button": # text, x, y, w, h
-                    cpp_code += f"drawButton({parts[1]}, {parts[2]}, {parts[3]}, {parts[4]}, {parts[5]});\n"
+                
+                try:
+                    if cmd == "background":
+                        cpp_code += f"glClearColor({parts[1]}, {parts[2]}, {parts[3]}, 1.0f);\n"
+                        cpp_code += "glClear(GL_COLOR_BUFFER_BIT);\n"
+                    elif cmd == "rect":
+                        # x, y, w, h, r, g, b
+                        cpp_code += f"drawRect({parts[1]}, {parts[2]}, {parts[3]}, {parts[4]}, {parts[5]}, {parts[6]}, {parts[7]});\n"
+                    elif cmd == "button":
+                        # text, x, y, w, h (всего 5 аргументов после команды)
+                        # Если аргументов меньше, добавим дефолтную высоту
+                        h = parts[5] if len(parts) > 5 else "100"
+                        cpp_code += f"drawButton({parts[1]}, {parts[2]}, {parts[3]}, {parts[4]}, {h});\n"
+                except IndexError:
+                    print(f"Error parsing line: {line}")
             
             return cpp_code
 
-        source_files = [f for f in os.listdir('.') if f.endswith('.cubic')]
-        logic_code = ""
-        for f in source_files:
-            logic_code += compile_cubic(f)
+        logic = ""
+        if os.path.exists('main.cubic'):
+            logic = compile_cubic('main.cubic')
 
         template = """
+        #include <android/log.h>
         #include <android_native_app_glue.h>
         #include <GLES2/gl2.h>
-        #include <iostream>
 
-        void drawRect(float x, float y, float w, float h, float r, float g, float b) {
-            // Упрощенный рендер квадрата (настоящий код будет длиннее)
+        extern "C" {
+            // Заглушки для функций отрисовки
+            void drawRect(float x, float y, float w, float h, float r, float g, float b) {
+                // Тут будет код рендера на OpenGL
+            }
+            void drawButton(const char* text, float x, float y, float w, float h) {
+                // Тут будет код UI
+            }
         }
 
-        void drawButton(const char* text, float x, float y, float w, float h) {
-            // Логика UI кнопки
+        void handle_cmd(struct android_app* app, int32_t cmd) {
+            if (cmd == APP_CMD_INIT_WINDOW) {
+                // Инициализация OpenGL здесь
+            }
         }
 
         void android_main(struct android_app* state) {
+            state->onAppCmd = handle_cmd;
             while (1) {
-                // Основной цикл отрисовки
+                int ident;
+                int events;
+                struct android_poll_source* source;
+                while ((ident = ALooper_pollAll(0, NULL, &events, (void**)&source)) >= 0) {
+                    if (source != NULL) source->process(state, source);
+                    if (state->destroyRequested != 0) return;
+                }
+                
+                // Вставляем сгенерированный код
                 {LOGIC}
             }
         }
-        """.replace("{LOGIC}", logic_code)
+        """.replace("{LOGIC}", logic)
 
         with open("generated_main.cpp", "w") as f:
             f.write(template)
         EOF
-
-    - name: Run Transpiler
-      run: |
-        # Здесь мы запускаем наш "компилятор" твоего языка
         python3 transpiler.py
 
-    - name: Build C++ APK
+    - name: Build
       run: |
         TC=$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin
         GLUE=$ANDROID_NDK_ROOT/sources/android/native_app_glue
         
-        # Компилируем сгенерированный C++ код
+        # 1. Компилируем Glue (C) отдельно через clang
+        $TC/aarch64-linux-android24-clang -c $GLUE/android_native_app_glue.c -o glue.o -I$GLUE
+        
+        # 2. Компилируем наш код (C++) через clang++
         $TC/aarch64-linux-android24-clang++ -shared -fPIC \
-            generated_main.cpp $GLUE/android_native_app_glue.c \
+            generated_main.cpp glue.o \
             -I$GLUE -landroid -llog -lGLESv2 -lEGL \
             -o libmain.so
 
     - name: Package
       run: |
-        mkdir -p staging/lib/arm64-v8a staging/assets
+        mkdir -p staging/lib/arm64-v8a
         cp libmain.so staging/lib/arm64-v8a/libmain.so
         
-        # Создаем минимальный манифест, если его нет
         if [ ! -f AndroidManifest.xml ]; then
           cat << 'EOF' > AndroidManifest.xml
           <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.cubic.lang">
             <application android:label="CubicApp" android:hasCode="false">
-              <activity android:name="android.app.NativeActivity">
+              <activity android:name="android.app.NativeActivity" android:configChanges="orientation|keyboardHidden">
                 <meta-data android:name="android.app.lib_name" android:value="main" />
                 <intent-filter>
                   <action android:name="android.intent.action.MAIN" />
@@ -110,9 +134,8 @@ jobs:
 
         BT=$ANDROID_HOME/build-tools/34.0.0
         $BT/aapt package -f -M AndroidManifest.xml -I $ANDROID_HOME/platforms/android-34/android.jar -F unsigned.apk staging/
-        $BT/apksigner sign --ks-key-alias a --ks-pass pass:android --key-pass pass:android --out CubicProject.apk unsigned.apk || \
-        (keytool -genkey -v -keystore d.ks -storepass android -alias a -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=X" && \
-        $BT/apksigner sign --ks d.ks --ks-pass pass:android --out CubicProject.apk unsigned.apk)
+        keytool -genkey -v -keystore d.ks -storepass android -alias a -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=X"
+        $BT/apksigner sign --ks d.ks --ks-pass pass:android --out CubicProject.apk unsigned.apk
 
     - uses: actions/upload-artifact@v4
       with:
