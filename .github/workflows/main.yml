@@ -15,9 +15,9 @@ jobs:
       with:
         ndk-version: r25c
 
-    - name: Create Transpiler and DEX Source
+    - name: Create Transpiler and Java Wrapper
       run: |
-        # 1. Скрипт транслятора
+        # 1. Скрипт транслятора (C++)
         cat << 'EOF' > transpiler.py
         import os, re
         def compile_cubic(file_path):
@@ -47,35 +47,30 @@ jobs:
         #include <android_native_app_glue.h>
         #include <GLES2/gl2.h>
         #include <EGL/egl.h>
-        
         extern "C" {
             void drawRect(float x, float y, float w, float h, float r, float g, float b) {}
             void drawButton(const char* t, float x, float y, float w, float h) {}
-
             void android_main(struct android_app* state) {
-                EGLDisplay display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
-                eglInitialize(display, 0, 0);
-                EGLConfig config; EGLint numConfigs;
-                EGLint attribs[] = { EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT, EGL_SURFACE_TYPE, EGL_WINDOW_BIT, EGL_BLUE_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_RED_SIZE, 8, EGL_NONE };
-                eglChooseConfig(display, attribs, &config, 1, &numConfigs);
-                EGLContext context = eglCreateContext(display, config, NULL, new EGLint[3]{EGL_CONTEXT_CLIENT_VERSION, 2, EGL_NONE});
-                EGLSurface surface = EGL_NO_SURFACE;
-
+                EGLDisplay d = eglGetDisplay(EGL_DEFAULT_DISPLAY);
+                eglInitialize(d, 0, 0);
+                EGLConfig cfg; EGLint n;
+                EGLint attrs[] = { EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT, EGL_BLUE_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_RED_SIZE, 8, EGL_NONE };
+                eglChooseConfig(d, attrs, &cfg, 1, &n);
+                EGLContext ctx = eglCreateContext(d, cfg, NULL, new EGLint[3]{EGL_CONTEXT_CLIENT_VERSION, 2, EGL_NONE});
+                EGLSurface s = EGL_NO_SURFACE;
                 while (1) {
-                    int ident, events; struct android_poll_source* source;
-                    while ((ident = ALooper_pollOnce(state->window ? 0 : -1, NULL, &events, (void**)&source)) >= 0) {
-                        if (source) source->process(state, source);
+                    int id, ev; struct android_poll_source* src;
+                    while ((id = ALooper_pollOnce(state->window ? 0 : -1, NULL, &ev, (void**)&src)) >= 0) {
+                        if (src) src->process(state, src);
                         if (state->destroyRequested) return;
                     }
-
-                    if (state->window && surface == EGL_NO_SURFACE) {
-                        surface = eglCreateWindowSurface(display, config, state->window, NULL);
-                        eglMakeCurrent(display, surface, surface, context);
+                    if (state->window && s == EGL_NO_SURFACE) {
+                        s = eglCreateWindowSurface(d, cfg, state->window, NULL);
+                        eglMakeCurrent(d, s, s, ctx);
                     }
-
-                    if (surface != EGL_NO_SURFACE) {
+                    if (s != EGL_NO_SURFACE) {
                         {LOGIC}
-                        eglSwapBuffers(display, surface);
+                        eglSwapBuffers(d, s);
                     }
                 }
             }
@@ -85,29 +80,38 @@ jobs:
         EOF
         python3 transpiler.py
 
-        # 2. Создаем "пустышку" на Java для генерации DEX
-        echo "package com.cubic.game; public class Fake { }" > Fake.java
+        # 2. Создаем Java-обертку (нужна для совместимости с Tecno/Android 14)
+        mkdir -p com/cubic/game
+        cat << 'EOF' > com/cubic/game/MainActivity.java
+        package com.cubic.game;
+        import android.app.NativeActivity;
+        public class MainActivity extends NativeActivity {
+            static {
+                System.loadLibrary("main");
+            }
+        }
+        EOF
 
-    - name: Build Libraries (C++)
+    - name: Build Libraries (All ABIs)
       run: |
         TC=$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin
         GLUE=$ANDROID_NDK_ROOT/sources/android/native_app_glue
         FLAGS="-shared -fPIC -I$GLUE -landroid -llog -lGLESv2 -lEGL -static-libstdc++"
         
+        # Собираем сразу для двух типов процессоров (32 и 64 бита)
         $TC/aarch64-linux-android24-clang -c $GLUE/android_native_app_glue.c -o glue64.o -I$GLUE
         $TC/aarch64-linux-android24-clang++ generated_main.cpp glue64.o $FLAGS -o libmain64.so
         
         $TC/armv7a-linux-androideabi24-clang -c $GLUE/android_native_app_glue.c -o glue32.o -I$GLUE
         $TC/armv7a-linux-androideabi24-clang++ generated_main.cpp glue32.o $FLAGS -o libmain32.so
 
-    - name: Generate DEX
+    - name: Compile Java to DEX
       run: |
-        # Компилируем Java в class, затем в DEX
-        javac -source 8 -target 8 Fake.java
-        $ANDROID_HOME/build-tools/34.0.0/d8 Fake.class --output .
-        # Теперь у нас есть файл classes.dex
+        # Используем android.jar для компиляции
+        javac -d . -classpath $ANDROID_HOME/platforms/android-34/android.jar com/cubic/game/MainActivity.java
+        $ANDROID_HOME/build-tools/34.0.0/d8 com/cubic/game/MainActivity.class --lib $ANDROID_HOME/platforms/android-34/android.jar --output .
 
-    - name: Final APK Assembly
+    - name: Assemble APK
       run: |
         mkdir -p staging/lib/arm64-v8a staging/lib/armeabi-v7a
         cp libmain64.so staging/lib/arm64-v8a/libmain.so
@@ -116,12 +120,11 @@ jobs:
         
         cat << 'EOF' > AndroidManifest.xml
         <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.cubic.game">
-            <uses-feature android:glEsVersion="0x00020000" android:required="true" />
+            <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="34" />
             <application android:label="CubicBattleX" android:hasCode="true" android:extractNativeLibs="true">
-                <activity android:name="android.app.NativeActivity" 
+                <activity android:name=".MainActivity" 
                           android:configChanges="orientation|keyboardHidden|screenSize"
                           android:exported="true">
-                    <meta-data android:name="android.app.lib_name" android:value="main" />
                     <intent-filter>
                         <action android:name="android.intent.action.MAIN" />
                         <category android:name="android.intent.category.LAUNCHER" />
@@ -137,8 +140,8 @@ jobs:
         keytool -genkey -v -keystore my.keystore -alias cubic -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=C" -storepass 123456 -keypass 123456 || true
         $BT/apksigner sign --ks my.keystore --ks-pass pass:123456 --out CubicBattleX.apk aligned.apk
 
-    - name: Upload APK
+    - name: Upload
       uses: actions/upload-artifact@v4
       with:
-        name: CubicBattleX-Fix
+        name: CubicBattleX-Tecno-Fix
         path: CubicBattleX.apk
