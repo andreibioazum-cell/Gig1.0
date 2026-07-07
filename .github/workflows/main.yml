@@ -1,0 +1,120 @@
+name: CubicLang Compiler and Builder
+
+on: [push, workflow_dispatch]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Environment
+      uses: android-actions/setup-android@v3
+    - run: sdkmanager "platforms;android-34" "build-tools;34.0.0"
+    - uses: nttld/setup-ndk@v1
+      with:
+        ndk-version: r25c
+
+    - name: Create Transpiler (The Language Engine)
+      run: |
+        cat << 'EOF' > transpiler.py
+        import os, sys
+
+        def compile_cubic(file_path):
+            with open(file_path, 'r') as f:
+                lines = f.readlines()
+            
+            cpp_code = ""
+            for line in lines:
+                parts = line.strip().split()
+                if not parts: continue
+                
+                cmd = parts[0]
+                if cmd == "background":
+                    cpp_code += f"glClearColor({parts[1]}, {parts[2]}, {parts[3]}, 1.0f);\n"
+                    cpp_code += "glClear(GL_COLOR_BUFFER_BIT);\n"
+                elif cmd == "rect": # x, y, w, h, r, g, b
+                    cpp_code += f"drawRect({parts[1]}, {parts[2]}, {parts[3]}, {parts[4]}, {parts[5]}, {parts[6]}, {parts[7]});\n"
+                elif cmd == "button": # text, x, y, w, h
+                    cpp_code += f"drawButton({parts[1]}, {parts[2]}, {parts[3]}, {parts[4]}, {parts[5]});\n"
+            
+            return cpp_code
+
+        source_files = [f for f in os.listdir('.') if f.endswith('.cubic')]
+        logic_code = ""
+        for f in source_files:
+            logic_code += compile_cubic(f)
+
+        template = """
+        #include <android_native_app_glue.h>
+        #include <GLES2/gl2.h>
+        #include <iostream>
+
+        void drawRect(float x, float y, float w, float h, float r, float g, float b) {
+            // Упрощенный рендер квадрата (настоящий код будет длиннее)
+        }
+
+        void drawButton(const char* text, float x, float y, float w, float h) {
+            // Логика UI кнопки
+        }
+
+        void android_main(struct android_app* state) {
+            while (1) {
+                // Основной цикл отрисовки
+                {LOGIC}
+            }
+        }
+        """.replace("{LOGIC}", logic_code)
+
+        with open("generated_main.cpp", "w") as f:
+            f.write(template)
+        EOF
+
+    - name: Run Transpiler
+      run: |
+        # Здесь мы запускаем наш "компилятор" твоего языка
+        python3 transpiler.py
+
+    - name: Build C++ APK
+      run: |
+        TC=$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin
+        GLUE=$ANDROID_NDK_ROOT/sources/android/native_app_glue
+        
+        # Компилируем сгенерированный C++ код
+        $TC/aarch64-linux-android24-clang++ -shared -fPIC \
+            generated_main.cpp $GLUE/android_native_app_glue.c \
+            -I$GLUE -landroid -llog -lGLESv2 -lEGL \
+            -o libmain.so
+
+    - name: Package
+      run: |
+        mkdir -p staging/lib/arm64-v8a staging/assets
+        cp libmain.so staging/lib/arm64-v8a/libmain.so
+        
+        # Создаем минимальный манифест, если его нет
+        if [ ! -f AndroidManifest.xml ]; then
+          cat << 'EOF' > AndroidManifest.xml
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.cubic.lang">
+            <application android:label="CubicApp" android:hasCode="false">
+              <activity android:name="android.app.NativeActivity">
+                <meta-data android:name="android.app.lib_name" android:value="main" />
+                <intent-filter>
+                  <action android:name="android.intent.action.MAIN" />
+                  <category android:name="android.intent.category.LAUNCHER" />
+                </intent-filter>
+              </activity>
+            </application>
+          </manifest>
+        EOF
+        fi
+
+        BT=$ANDROID_HOME/build-tools/34.0.0
+        $BT/aapt package -f -M AndroidManifest.xml -I $ANDROID_HOME/platforms/android-34/android.jar -F unsigned.apk staging/
+        $BT/apksigner sign --ks-key-alias a --ks-pass pass:android --key-pass pass:android --out CubicProject.apk unsigned.apk || \
+        (keytool -genkey -v -keystore d.ks -storepass android -alias a -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=X" && \
+        $BT/apksigner sign --ks d.ks --ks-pass pass:android --out CubicProject.apk unsigned.apk)
+
+    - uses: actions/upload-artifact@v4
+      with:
+        name: CubicLanguageApp
+        path: CubicProject.apk
