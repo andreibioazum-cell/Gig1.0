@@ -13,19 +13,15 @@ jobs:
     - run: sdkmanager "platforms;android-34" "build-tools;34.0.0"
     - uses: nttld/setup-ndk@v1
       with:
-        ndk-version: r25c # Используем r25c, она стабильнее для этих целей
+        ndk-version: r25c
 
     - name: Create Transpiler
       run: |
         cat << 'EOF' > transpiler.py
         import os, re
-
         def compile_cubic(file_path):
-            if not os.path.exists(file_path):
-                return ""
-            with open(file_path, 'r') as f:
-                lines = f.readlines()
-            
+            if not os.path.exists(file_path): return ""
+            with open(file_path, 'r') as f: lines = f.readlines()
             cpp_code = ""
             for line in lines:
                 line = line.strip()
@@ -33,53 +29,44 @@ jobs:
                 parts = re.findall(r'(?:[^\s"]|"(?:\\.|[^"])*")+', line)
                 if not parts: continue
                 cmd = parts[0]
-                
                 try:
                     if cmd == "background":
                         cpp_code += f"glClearColor({parts[1]}, {parts[2]}, {parts[3]}, 1.0f); glClear(GL_COLOR_BUFFER_BIT);\n"
                     elif cmd == "rect":
                         cpp_code += f"drawRect({parts[1]}, {parts[2]}, {parts[3]}, {parts[4]}, {parts[5]}, {parts[6]}, {parts[7]});\n"
                     elif cmd == "button":
-                        txt = parts[1]
-                        x, y, w = parts[2], parts[3], parts[4]
+                        txt = parts[1]; x, y, w = parts[2], parts[3], parts[4]
                         h = parts[5] if len(parts) > 5 else "100.0f"
                         cpp_code += f"drawButton({txt}, {x}, {y}, {w}, {h});\n"
-                except Exception as e:
-                    pass
+                except: pass
             return cpp_code
 
         logic = compile_cubic('main.cubic')
-
         template = """
         #include <android_native_app_glue.h>
         #include <GLES2/gl2.h>
         #include <EGL/egl.h>
         #include <android/looper.h>
-
         extern "C" {
             void drawRect(float x, float y, float w, float h, float r, float g, float b) {}
-            void drawButton(const char* text, float x, float y, float w, float h) {}
-
+            void drawButton(const char* t, float x, float y, float w, float h) {}
             void android_main(struct android_app* state) {
                 state->onAppCmd = [](struct android_app* app, int32_t cmd) {
                     if (cmd == APP_CMD_INIT_WINDOW) {
-                        EGLDisplay display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
-                        eglInitialize(display, NULL, NULL);
-                        EGLConfig config; EGLint numConfigs;
-                        EGLint attribs[] = { EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT, EGL_BLUE_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_RED_SIZE, 8, EGL_NONE };
-                        eglChooseConfig(display, attribs, &config, 1, &numConfigs);
-                        EGLSurface surface = eglCreateWindowSurface(display, config, app->window, NULL);
-                        EGLContext context = eglCreateContext(display, config, NULL, new EGLint[3]{EGL_CONTEXT_CLIENT_VERSION, 2, EGL_NONE});
-                        eglMakeCurrent(display, surface, surface, context);
+                        EGLDisplay d = eglGetDisplay(EGL_DEFAULT_DISPLAY);
+                        eglInitialize(d, NULL, NULL);
+                        EGLConfig c; EGLint n;
+                        EGLint a[] = { EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT, EGL_BLUE_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_RED_SIZE, 8, EGL_NONE };
+                        eglChooseConfig(d, a, &c, 1, &n);
+                        EGLSurface s = eglCreateWindowSurface(d, c, app->window, NULL);
+                        EGLContext ctx = eglCreateContext(d, c, NULL, new EGLint[3]{EGL_CONTEXT_CLIENT_VERSION, 2, EGL_NONE});
+                        eglMakeCurrent(d, s, s, ctx);
                     }
                 };
-
                 while (1) {
-                    int ident, events;
-                    struct android_poll_source* source;
-                    // ЗАМЕНЕНО: ALooper_pollOnce вместо ALooper_pollAll
-                    while ((ident = ALooper_pollOnce(0, NULL, &events, (void**)&source)) >= 0) {
-                        if (source != NULL) source->process(state, source);
+                    int i, e; struct android_poll_source* src;
+                    while ((i = ALooper_pollOnce(0, NULL, &e, (void**)&src)) >= 0) {
+                        if (src != NULL) src->process(state, src);
                         if (state->destroyRequested != 0) return;
                     }
                     if (state->window != NULL) {
@@ -90,35 +77,35 @@ jobs:
             }
         }
         """.replace("{LOGIC}", logic)
-
-        with open("generated_main.cpp", "w") as f:
-            f.write(template)
+        with open("generated_main.cpp", "w") as f: f.write(template)
         EOF
         python3 transpiler.py
 
-    - name: Build
+    - name: Build Multi-Arch
       run: |
         TC=$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin
         GLUE=$ANDROID_NDK_ROOT/sources/android/native_app_glue
-        
-        # Компилируем glue (как C)
-        $TC/aarch64-linux-android24-clang -c $GLUE/android_native_app_glue.c -o glue.o -I$GLUE
-        
-        # Компилируем твой код (как C++)
-        $TC/aarch64-linux-android24-clang++ -shared -fPIC \
-            generated_main.cpp glue.o \
-            -I$GLUE -landroid -llog -lGLESv2 -lEGL \
-            -o libmain.so
+        FLAGS="-shared -fPIC -I$GLUE -landroid -llog -lGLESv2 -lEGL"
 
-    - name: Package
+        # Сборка для arm64-v8a (64-bit)
+        $TC/aarch64-linux-android21-clang -c $GLUE/android_native_app_glue.c -o glue64.o -I$GLUE
+        $TC/aarch64-linux-android21-clang++ generated_main.cpp glue64.o $FLAGS -o libmain64.so
+
+        # Сборка для armeabi-v7a (32-bit)
+        $TC/armv7a-linux-androideabi21-clang -c $GLUE/android_native_app_glue.c -o glue32.o -I$GLUE
+        $TC/armv7a-linux-androideabi21-clang++ generated_main.cpp glue32.o $FLAGS -o libmain32.so
+
+    - name: Package APK
       run: |
-        mkdir -p staging/lib/arm64-v8a
-        cp libmain.so staging/lib/arm64-v8a/libmain.so
+        mkdir -p staging/lib/arm64-v8a staging/lib/armeabi-v7a
+        cp libmain64.so staging/lib/arm64-v8a/libmain.so
+        cp libmain32.so staging/lib/armeabi-v7a/libmain.so
         
         cat << 'EOF' > AndroidManifest.xml
         <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.cubic.lang">
+          <uses-sdk android:minSdkVersion="21" android:targetSdkVersion="34" />
           <application android:label="CubicApp" android:hasCode="false">
-            <activity android:name="android.app.NativeActivity" android:configChanges="orientation|keyboardHidden">
+            <activity android:name="android.app.NativeActivity" android:configChanges="orientation|keyboardHidden|screenSize">
               <meta-data android:name="android.app.lib_name" android:value="main" />
               <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
