@@ -1,4 +1,4 @@
-name: CubicLang 3D Builder
+name: CubicLang 2D & Firebase Builder
 
 on:
   push:
@@ -20,107 +20,218 @@ jobs:
 
     - name: Create Transpiler and Java Wrapper
       run: |
-        # 1. Скрипт транслятора (C++) с поддержкой 3D
+        # 1. Парсер и компилятор языка CubicLang Pro
         cat << 'EOF' > transpiler.py
         import os, re
+
         def compile_cubic(file_path):
             if not os.path.exists(file_path): return ""
-            with open(file_path, 'r', encoding='utf-8') as f: lines = f.readlines()
-            cpp_code = ""
-            for line in lines:
-                line = line.strip()
-                if not line or line.startswith("#"): continue
-                parts = re.findall(r'(?:[^\s"]|"(?:\\.|[^"])*")+', line)
-                if not parts: continue
-                cmd = parts[0]
-                try:
-                    if cmd == "background":
-                        cpp_code += f"glClearColor({parts[1]}, {parts[2]}, {parts[3]}, 1.0f); glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);\n"
-                    elif cmd == "rect":
-                        cpp_code += f"drawRect({parts[1]}, {parts[2]}, {parts[3]}, {parts[4]}, {parts[5]}, {parts[6]}, {parts[7]});\n"
-                    elif cmd == "button":
-                        txt = parts[1]; x, y, w = parts[2], parts[3], parts[4]
-                        h = parts[5] if len(parts) > 5 else "100.0f"
-                        cpp_code += f"drawButton({txt}, {x}, {y}, {w}, {h});\n"
-                    elif cmd == "cube":
-                        x, y, z, size = parts[1], parts[2], parts[3], parts[4]
-                        r, g, b = parts[5], parts[6], parts[7]
-                        rx = parts[8] if len(parts) > 8 else "g_auto_rot"
-                        ry = parts[9] if len(parts) > 9 else "g_auto_rot * 0.6f"
-                        cpp_code += f"drawCube3D({x}, {y}, {z}, {size}, {r}, {g}, {b}, {rx}, {ry});\n"
-                except Exception as e: 
-                    print(f"Error parsing line '{line}': {e}")
-            return cpp_code
+            with open(file_path, 'r', encoding='utf-8') as f: content = f.read()
+
+            content = re.sub(r'#.*', '', content) # Удаляем комментарии
+
+            # Объявление переменных: var x = 0 -> float x = 0;
+            content = re.sub(r'\bvar\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*(".*?"|\d+\.\d+|\d+)', r'float \1 = \2;', content)
+            content = re.sub(r'\bvar\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*(.+)', r'float \1 = \2;', content)
+
+            # Объявление строк
+            content = re.sub(r'float\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*("(.*?)");', r'const char* \1 = \2;', content)
+
+            # Перевод системных событий CubicLang -> функции C++
+            content = re.sub(r'\bevent\s+init\s*\(\s*\)\s*\{', r'void game_init() {', content)
+            content = re.sub(r'\bevent\s+update\s*\(\s*\)\s*\{', r'void game_update() {', content)
+            content = re.sub(r'\bevent\s+draw_hud\s*\(\s*\)\s*\{', r'void game_draw_hud() {', content)
+            content = re.sub(r'\bevent\s+on_touch\s*\(\s*([^,)]+)\s*,\s*([^)]+)\s*\)\s*\{', r'void game_on_touch(float \1, float \2) {', content)
+            content = re.sub(r'\bevent\s+on_key\s*\(\s*([^)]+)\s*\)\s*\{', r'void game_on_key(const char* \1) {', content)
+
+            # Системные биндинги API рисования
+            content = re.sub(r'background\(([^,]+),\s*([^,]+),\s*([^)]+)\)', r'g_bgR=\1; g_bgG=\2; g_bgB=\3;', content)
+            content = re.sub(r'draw_rect\(([^,]+),\s*([^,]+),\s*([^,]+),\s*([^,]+),\s*([^,]+),\s*([^,]+),\s*([^)]+)\)', r'drawHudRect(\1, \2, \3, \4, \5, \6, \7);', content)
+            content = re.sub(r'draw_circle\(([^,]+),\s*([^,]+),\s*([^,]+),\s*([^,]+),\s*([^,]+),\s*([^)]+)\)', r'drawCircle2D(\1, \2, \3, \4, \5, \6);', content)
+            content = re.sub(r'draw_button\(([^,]+),\s*([^,]+),\s*([^,]+),\s*([^,]+),\s*([^,]+),\s*([^)]+)\)', r'drawButton(\2, \3, \4, \5, \6);', content)
+            content = re.sub(r'draw_text\(([^,]+),\s*([^,]+),\s*([^,]+),\s*([^,]+),\s*([^,]+),\s*([^,]+),\s*([^)]+)\)', r'drawHudText(\1, \2, \3, \4, \5, \6, \7);', content)
+
+            # Системные функции клавиатуры
+            content = re.sub(r'open_keyboard\(\)', r'show_keyboard(state_global);', content)
+            content = re.sub(r'string_pop\(([^)]+)\)', r'string_pop_helper(\1)', content)
+            content = re.sub(r'string_push\(([^,]+),\s*([^)]+)\)', r'string_push_helper(\1, \2)', content)
+
+            # Системные биндинги Firebase
+            content = re.sub(r'fb_init\(([^,]+),\s*([^)]+)\)', r'call_fb_init(state_global->activity, \1, \2);', content)
+            content = re.sub(r'fb_register\(([^,]+),\s*([^)]+)\)', r'call_fb_auth(state_global->activity, \1, \2, true);', content)
+            content = re.sub(r'fb_login\(([^,]+),\s*([^)]+)\)', r'call_fb_auth(state_global->activity, \1, \2, false);', content)
+            content = re.sub(r'fb_db_set\(([^,]+),\s*([^)]+)\)', r'call_fb_db_set(state_global->activity, \1, \2);', content)
+            content = re.sub(r'fb_db_get\(([^)]+)\)', r'call_fb_db_get(state_global->activity, \1);', content)
+            content = re.sub(r'fb_get_auth_status\(\)', r'get_fb_auth_status(state_global->activity)', content)
+            content = re.sub(r'fb_get_db_status\(\)', r'get_fb_db_status(state_global->activity)', content)
+            content = re.sub(r'fb_get_db_value\(\)', r'get_fb_db_value(state_global->activity)', content)
+
+            # Вспомогательные математические функции
+            content = re.sub(r'sqrt\(([^)]+)\)', r'sqrtf(\1)', content)
+
+            return content
 
         logic = compile_cubic('main.cubic')
+
+        # C++ Шаблон игрового 2D-движка с полной интеграцией JNI
         template = """
         #include <android_native_app_glue.h>
+        #include <android/input.h>
         #include <GLES2/gl2.h>
         #include <EGL/egl.h>
         #include <math.h>
+        #include <stdlib.h>
+        #include <stdio.h>
+        #include <string.h>
 
-        struct Mat4 {
-            float m[16];
-            static Mat4 identity() {
-                Mat4 mat = {0};
-                mat.m[0] = 1.0f; mat.m[5] = 1.0f; mat.m[10] = 1.0f; mat.m[15] = 1.0f;
-                return mat;
-            }
-            static Mat4 perspective(float fov, float aspect, float nearZ, float farZ) {
-                Mat4 mat = {0};
-                float f = 1.0f / tanf(fov * 0.5f * 3.14159f / 180.0f);
-                mat.m[0] = f / aspect;
-                mat.m[5] = f;
-                mat.m[10] = (farZ + nearZ) / (nearZ - farZ);
-                mat.m[11] = -1.0f;
-                mat.m[14] = (2.0f * farZ * nearZ) / (nearZ - farZ);
-                return mat;
-            }
-            static Mat4 translate(float x, float y, float z) {
-                Mat4 mat = identity();
-                mat.m[12] = x; mat.m[13] = y; mat.m[14] = z;
-                return mat;
-            }
-            static Mat4 rotateY(float angle) {
-                Mat4 mat = identity();
-                float rad = angle * 3.14159f / 180.0f;
-                float c = cosf(rad); float s = sinf(rad);
-                mat.m[0] = c;  mat.m[2] = -s;
-                mat.m[8] = s;  mat.m[10] = c;
-                return mat;
-            }
-            static Mat4 rotateX(float angle) {
-                Mat4 mat = identity();
-                float rad = angle * 3.14159f / 180.0f;
-                float c = cosf(rad); float s = sinf(rad);
-                mat.m[5] = c;  mat.m[6] = s;
-                mat.m[9] = -s; mat.m[10] = c;
-                return mat;
-            }
-            void multiply(const Mat4& b) {
-                Mat4 a = *this;
-                for (int r = 0; r < 4; r++) {
-                    for (int c = 0; c < 4; c++) {
-                        m[r + c*4] = a.m[r]*b.m[c*4] + a.m[r+4]*b.m[1+c*4] + a.m[r+8]*b.m[2+c*4] + a.m[r+12]*b.m[3+c*4];
-                    }
-                }
-            }
+        static struct android_app* state_global = nullptr;
+
+        // Пиксельный ретро-шрифт 8x8
+        static const unsigned char g_font[39][8] = {
+            {0x3C,0x66,0x6E,0x7E,0x76,0x66,0x3C,0x00}, {0x18,0x18,0x38,0x18,0x18,0x18,0x7E,0x00},
+            {0x3C,0x66,0x06,0x0E,0x30,0x60,0x7E,0x00}, {0x3C,0x66,0x06,0x1C,0x06,0x66,0x3C,0x00},
+            {0x0C,0x1C,0x3C,0x6C,0x7E,0x0C,0x0C,0x00}, {0x7E,0x60,0x7C,0x06,0x06,0x66,0x3C,0x00},
+            {0x3C,0x66,0x60,0x7C,0x66,0x66,0x3C,0x00}, {0x7E,0x66,0x06,0x0C,0x18,0x18,0x18,0x00},
+            {0x3C,0x66,0x66,0x3C,0x66,0x66,0x3C,0x00}, {0x3C,0x66,0x66,0x3E,0x06,0x66,0x3C,0x00},
+            {0x18,0x3C,0x66,0x66,0x7E,0x66,0x66,0x00}, {0x7C,0x66,0x66,0x7C,0x60,0x60,0x60,0x00},
+            {0x3C,0x66,0x60,0x60,0x60,0x66,0x3C,0x00}, {0x78,0x6C,0x66,0x66,0x66,0x6C,0x78,0x00},
+            {0x7E,0x60,0x60,0x7C,0x60,0x60,0x7E,0x00}, {0x7E,0x60,0x60,0x7C,0x60,0x60,0x60,0x00},
+            {0x3E,0x60,0x60,0x6E,0x66,0x66,0x3E,0x00}, {0x66,0x66,0x66,0x7E,0x66,0x66,0x66,0x00},
+            {0x3C,0x18,0x18,0x18,0x18,0x18,0x3C,0x00}, {0x1E,0x0C,0x0C,0x0C,0x0C,0xCC,0x78,0x00},
+            {0x66,0x6C,0x78,0x70,0x78,0x6C,0x66,0x00}, {0x60,0x60,0x60,0x60,0x60,0x60,0x7E,0x00},
+            {0x63,0x77,0x7F,0x6B,0x63,0x63,0x63,0x00}, {0x66,0x76,0x7E,0x7E,0x6E,0x66,0x66,0x00},
+            {0x3C,0x66,0x66,0x66,0x66,0x66,0x3C,0x00}, {0x7C,0x66,0x66,0x7C,0x60,0x60,0x60,0x00},
+            {0x3C,0x66,0x66,0x66,0x6E,0x3C,0x0E,0x00}, {0x7C,0x66,0x66,0x7C,0x78,0x6C,0x66,0x00},
+            {0x3C,0x66,0x30,0x18,0x0C,0x66,0x3C,0x00}, {0x7E,0x5A,0x18,0x18,0x18,0x18,0x18,0x00},
+            {0x66,0x66,0x66,0x66,0x66,0x66,0x3C,0x00}, {0x66,0x66,0x66,0x66,0x66,0x3C,0x18,0x00},
+            {0x63,0x63,0x63,0x6B,0x7F,0x77,0x63,0x00}, {0x66,0x66,0x3C,0x18,0x3C,0x66,0x66,0x00},
+            {0x66,0x66,0x66,0x3C,0x18,0x18,0x18,0x00}, {0x7E,0x06,0x0C,0x18,0x30,0x60,0x7E,0x00},
+            {0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00}, {0x00,0x00,0x00,0x3E,0x00,0x00,0x00,0x00}
         };
 
         static GLuint s_program = 0;
-        static GLint s_mvp_loc = -1;
         static GLint s_pos_loc = -1;
         static GLint s_col_loc = -1;
+        static int g_scr_w = 1080;
+        static int g_scr_h = 2400;
+        static float g_bgR = 0.12f, g_bgG = 0.15f, g_bgB = 0.22f;
 
+        float ndcX(float x) { return (x / 1080.0f) * 2.0f - 1.0f; }
+        float ndcY(float y) { return 1.0f - (y / 1920.0f) * 2.0f; }
+
+        const char* string_pop_helper(const char* str) {
+            size_t len = strlen(str);
+            if (len == 0) return "";
+            char* new_str = (char*)malloc(len);
+            strncpy(new_str, str, len - 1);
+            new_str[len - 1] = '\\0';
+            return new_str;
+        }
+
+        const char* string_push_helper(const char* str, const char* addition) {
+            if (strlen(addition) == 0) return str;
+            char* new_str = (char*)malloc(strlen(str) + strlen(addition) + 1);
+            strcpy(new_str, str);
+            strcat(new_str, addition);
+            return new_str;
+        }
+
+        // ================= JNI ИНТЕГРАЦИЯ С FIREBASE HELPER =================
+        void call_fb_init(ANativeActivity* activity, const char* url, const char* key) {
+            JNIEnv* env = nullptr;
+            activity->vm->AttachCurrentThread(&env, nullptr);
+            jclass clazz = env->GetObjectClass(activity->clazz);
+            jmethodID method = env->GetStaticMethodID(clazz, "fb_init", "(Ljava/lang/String;Ljava/lang/String;)V");
+            jstring jurl = env->NewStringUTF(url);
+            jstring jkey = env->NewStringUTF(key);
+            env->CallStaticVoidMethod(clazz, method, jurl, jkey);
+            env->DeleteLocalRef(jurl); env->DeleteLocalRef(jkey);
+            activity->vm->DetachCurrentThread();
+        }
+
+        void call_fb_auth(ANativeActivity* activity, const char* email, const char* pass, bool isRegister) {
+            JNIEnv* env = nullptr;
+            activity->vm->AttachCurrentThread(&env, nullptr);
+            jclass clazz = env->GetObjectClass(activity->clazz);
+            jmethodID method = env->GetStaticMethodID(clazz, "fb_auth", "(Ljava/lang/String;Ljava/lang/String;Z)V");
+            jstring jemail = env->NewStringUTF(email);
+            jstring jpass = env->NewStringUTF(pass);
+            env->CallStaticVoidMethod(clazz, method, jemail, jpass, isRegister);
+            env->DeleteLocalRef(jemail); env->DeleteLocalRef(jpass);
+            activity->vm->DetachCurrentThread();
+        }
+
+        void call_fb_db_set(ANativeActivity* activity, const char* path, float score) {
+            JNIEnv* env = nullptr;
+            activity->vm->AttachCurrentThread(&env, nullptr);
+            jclass clazz = env->GetObjectClass(activity->clazz);
+            jmethodID method = env->GetStaticMethodID(clazz, "fb_db_set", "(Ljava/lang/String;F)V");
+            jstring jpath = env->NewStringUTF(path);
+            env->CallStaticVoidMethod(clazz, method, jpath, score);
+            env->DeleteLocalRef(jpath);
+            activity->vm->DetachCurrentThread();
+        }
+
+        void call_fb_db_get(ANativeActivity* activity, const char* path) {
+            JNIEnv* env = nullptr;
+            activity->vm->AttachCurrentThread(&env, nullptr);
+            jclass clazz = env->GetObjectClass(activity->clazz);
+            jmethodID method = env->GetStaticMethodID(clazz, "fb_db_get", "(Ljava/lang/String;)V");
+            jstring jpath = env->NewStringUTF(path);
+            env->CallStaticVoidMethod(clazz, method, jpath);
+            env->DeleteLocalRef(jpath);
+            activity->vm->DetachCurrentThread();
+        }
+
+        const char* get_fb_auth_status(ANativeActivity* activity) {
+            JNIEnv* env = nullptr;
+            activity->vm->AttachCurrentThread(&env, nullptr);
+            jclass clazz = env->GetObjectClass(activity->clazz);
+            jmethodID method = env->GetStaticMethodID(clazz, "getAuthStatus", "()Ljava/lang/String;");
+            jstring jres = (jstring)env->CallStaticObjectMethod(clazz, method);
+            const char* res = env->GetStringUTFChars(jres, nullptr);
+            const char* ret = strdup(res);
+            env->ReleaseStringUTFChars(jres, res);
+            activity->vm->DetachCurrentThread();
+            return ret;
+        }
+
+        const char* get_fb_db_status(ANativeActivity* activity) {
+            JNIEnv* env = nullptr;
+            activity->vm->AttachCurrentThread(&env, nullptr);
+            jclass clazz = env->GetObjectClass(activity->clazz);
+            jmethodID method = env->GetStaticMethodID(clazz, "getDbStatus", "()Ljava/lang/String;");
+            jstring jres = (jstring)env->CallStaticObjectMethod(clazz, method);
+            const char* res = env->GetStringUTFChars(jres, nullptr);
+            const char* ret = strdup(res);
+            env->ReleaseStringUTFChars(jres, res);
+            activity->vm->DetachCurrentThread();
+            return ret;
+        }
+
+        float get_fb_db_value(ANativeActivity* activity) {
+            JNIEnv* env = nullptr;
+            activity->vm->AttachCurrentThread(&env, nullptr);
+            jclass clazz = env->GetObjectClass(activity->clazz);
+            jmethodID method = env->GetStaticMethodID(clazz, "getDbValue", "()F");
+            jfloat val = env->CallStaticFloatMethod(clazz, method);
+            activity->vm->DetachCurrentThread();
+            return val;
+        }
+
+        void show_keyboard(struct android_app* state) {
+            ANativeActivity_showSoftInput(state->activity, ANATIVEACTIVITY_SHOW_SOFT_INPUT_FORCED);
+        }
+
+        // ================= GRAPHICS RENDER ENGINE =================
         void initShaders() {
             if (s_program != 0) return;
             const char* vs = 
-                "uniform mat4 u_mvp;\\n"
                 "attribute vec4 a_pos;\\n"
                 "attribute vec4 a_color;\\n"
                 "varying vec4 v_color;\\n"
                 "void main() {\\n"
-                "  gl_Position = u_mvp * a_pos;\\n"
+                "  gl_Position = a_pos;\\n"
                 "  v_color = a_color;\\n"
                 "}\\n";
             const char* fs = 
@@ -131,141 +242,309 @@ jobs:
                 "}\\n";
             
             GLuint vsh = glCreateShader(GL_VERTEX_SHADER);
-            glShaderSource(vsh, 1, &vs, NULL);
-            glCompileShader(vsh);
-            
+            glShaderSource(vsh, 1, &vs, nullptr); glCompileShader(vsh);
             GLuint fsh = glCreateShader(GL_FRAGMENT_SHADER);
-            glShaderSource(fsh, 1, &fs, NULL);
-            glCompileShader(fsh);
+            glShaderSource(fsh, 1, &fs, nullptr); glCompileShader(fsh);
             
             s_program = glCreateProgram();
-            glAttachShader(s_program, vsh);
-            glAttachShader(s_program, fsh);
+            glAttachShader(s_program, vsh); glAttachShader(s_program, fsh);
             glLinkProgram(s_program);
             
-            s_mvp_loc = glGetUniformLocation(s_program, "u_mvp");
             s_pos_loc = glGetAttribLocation(s_program, "a_pos");
             s_col_loc = glGetAttribLocation(s_program, "a_color");
         }
 
-        extern "C" {
-            void drawRect(float x, float y, float w, float h, float r, float g, float b) {}
-            void drawButton(const char* t, float x, float y, float w, float h) {}
-            
-            void drawCube3D(float x, float y, float z, float size, float r, float g, float b, float rx, float ry) {
-                initShaders();
-                glUseProgram(s_program);
-                glEnable(GL_DEPTH_TEST);
-                
-                GLint viewport[4];
-                glGetIntegerv(GL_VIEWPORT, viewport);
-                float aspect = (viewport[2] > 0 && viewport[3] > 0) ? (float)viewport[2] / (float)viewport[3] : 1.0f;
-                
-                Mat4 proj = Mat4::perspective(45.0f, aspect, 0.1f, 100.0f);
-                Mat4 viewTranslate = Mat4::translate(x, y, z);
-                Mat4 rotX = Mat4::rotateX(rx);
-                Mat4 rotY = Mat4::rotateY(ry);
-                
-                Mat4 model = rotX;
-                model.multiply(rotY);
-                
-                Mat4 mvp = proj;
-                mvp.multiply(viewTranslate);
-                mvp.multiply(model);
-                
-                glUniformMatrix4fv(s_mvp_loc, 1, GL_FALSE, mvp.m);
-                
-                float hs = size * 0.5f;
-                float v[] = {
-                    -hs, -hs,  hs,   hs, -hs,  hs,   hs,  hs,  hs,
-                    -hs, -hs,  hs,   hs,  hs,  hs,  -hs,  hs,  hs,
-                    -hs, -hs, -hs,  -hs,  hs, -hs,   hs,  hs, -hs,
-                    -hs, -hs, -hs,   hs,  hs, -hs,   hs, -hs, -hs,
-                    -hs,  hs, -hs,  -hs,  hs,  hs,   hs,  hs,  hs,
-                    -hs,  hs, -hs,   hs,  hs,  hs,   hs,  hs, -hs,
-                    -hs, -hs, -hs,   hs, -hs, -hs,   hs, -hs,  hs,
-                    -hs, -hs, -hs,   hs, -hs,  hs,  -hs, -hs,  hs,
-                    -hs, -hs, -hs,  -hs, -hs,  hs,  -hs,  hs,  hs,
-                    -hs, -hs, -hs,  -hs,  hs,  hs,  -hs,  hs, -hs,
-                     hs, -hs, -hs,   hs,  hs, -hs,   hs,  hs,  hs,
-                     hs, -hs, -hs,   hs,  hs,  hs,   hs, -hs,  hs
-                };
-                
-                float c[36 * 4];
-                float shades[6] = { 1.0f, 0.5f, 0.8f, 0.4f, 0.6f, 0.7f };
-                for(int face=0; face<6; ++face) {
-                    float s = shades[face];
-                    for(int vert=0; vert<6; ++vert) {
-                        int idx = (face * 6 + vert) * 4;
-                        c[idx + 0] = r * s;
-                        c[idx + 1] = g * s;
-                        c[idx + 2] = b * s;
-                        c[idx + 3] = 1.0f;
-                    }
-                }
-                
-                glEnableVertexAttribArray(s_pos_loc);
-                glVertexAttribPointer(s_pos_loc, 3, GL_FLOAT, GL_FALSE, 0, v);
-                
-                glEnableVertexAttribArray(s_col_loc);
-                glVertexAttribPointer(s_col_loc, 4, GL_FLOAT, GL_FALSE, 0, c);
-                
-                glDrawArrays(GL_TRIANGLES, 0, 36);
-                
-                glDisableVertexAttribArray(s_pos_loc);
-                glDisableVertexAttribArray(s_col_loc);
+        void drawHudRect(float px, float py, float pw, float ph, float r, float g, float b) {
+            initShaders(); glUseProgram(s_program);
+
+            float x1 = ndcX(px); float y1 = ndcY(py);
+            float x2 = ndcX(px + pw); float y2 = ndcY(py + ph);
+
+            float v[] = { x1, y1, 0,  x2, y1, 0,  x2, y2, 0,  x1, y1, 0,  x2, y2, 0,  x1, y2, 0 };
+            float c[24];
+            for (int i=0; i<6; ++i) { c[i*4]=r; c[i*4+1]=g; c[i*4+2]=b; c[i*4+3]=1.0f; }
+
+            glEnableVertexAttribArray(s_pos_loc);
+            glVertexAttribPointer(s_pos_loc, 3, GL_FLOAT, GL_FALSE, 0, v);
+            glEnableVertexAttribArray(s_col_loc);
+            glVertexAttribPointer(s_col_loc, 4, GL_FLOAT, GL_FALSE, 0, c);
+            glDrawArrays(GL_TRIANGLES, 0, 6);
+        }
+
+        void drawCircle2D(float cx, float cy, float radius, float r, float g, float b) {
+            initShaders(); glUseProgram(s_program);
+
+            float v[34 * 3]; float c[34 * 4];
+            v[0] = ndcX(cx); v[1] = ndcY(cy); v[2] = 0.0f;
+            c[0] = r; c[1] = g; c[2] = b; c[3] = 1.0f;
+
+            for (int i = 0; i <= 32; i++) {
+                float angle = i * 2.0f * 3.14159f / 32.0f;
+                v[(i+1)*3] = ndcX(cx + cosf(angle) * radius);
+                v[(i+1)*3+1] = ndcY(cy + sinf(angle) * radius);
+                v[(i+1)*3+2] = 0.0f;
+                c[(i+1)*4] = r; c[(i+1)*4+1] = g; c[(i+1)*4+2] = b; c[(i+1)*4+3] = 1.0f;
             }
 
-            void android_main(struct android_app* state) {
-                EGLDisplay d = eglGetDisplay(EGL_DEFAULT_DISPLAY);
-                eglInitialize(d, 0, 0);
-                EGLConfig cfg; EGLint n;
-                EGLint attrs[] = { 
-                    EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT, 
-                    EGL_BLUE_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_RED_SIZE, 8, 
-                    EGL_DEPTH_SIZE, 16, 
-                    EGL_NONE 
-                };
-                eglChooseConfig(d, attrs, &cfg, 1, &n);
-                EGLContext ctx = eglCreateContext(d, cfg, NULL, new EGLint[3]{EGL_CONTEXT_CLIENT_VERSION, 2, EGL_NONE});
-                EGLSurface s = EGL_NO_SURFACE;
-                
-                float g_auto_rot = 0.0f;
+            glEnableVertexAttribArray(s_pos_loc);
+            glVertexAttribPointer(s_pos_loc, 3, GL_FLOAT, GL_FALSE, 0, v);
+            glEnableVertexAttribArray(s_col_loc);
+            glVertexAttribPointer(s_col_loc, 4, GL_FLOAT, GL_FALSE, 0, c);
+            glDrawArrays(GL_TRIANGLE_FAN, 0, 34);
+        }
 
-                while (1) {
-                    int id, ev; struct android_poll_source* src;
-                    while ((id = ALooper_pollOnce(state->window ? 0 : -1, NULL, &ev, (void**)&src)) >= 0) {
-                        if (src) src->process(state, src);
-                        if (state->destroyRequested) return;
+        void drawHudText(const char* text, float tx, float ty, float scale, float r, float g, float b) {
+            float curX = tx;
+            for (int i = 0; text[i] != '\\0'; ++i) {
+                char c = text[i];
+                int charIdx = 36;
+                if (c >= '0' && c <= '9') charIdx = c - '0';
+                else if (c >= 'A' && c <= 'Z') charIdx = 10 + (c - 'A');
+                else if (c >= 'a' && c <= 'z') charIdx = 10 + (c - 'a');
+                else if (c == '-') charIdx = 37;
+
+                for (int row = 0; row < 8; ++row) {
+                    unsigned char rowVal = g_font[charIdx][row];
+                    for (int col = 0; col < 8; ++col) {
+                        if (rowVal & (1 << (7 - col))) {
+                            drawHudRect(curX + col * scale, ty + row * scale, scale, scale, r, g, b);
+                        }
                     }
-                    if (state->window && s == EGL_NO_SURFACE) {
-                        s = eglCreateWindowSurface(d, cfg, state->window, NULL);
-                        eglMakeCurrent(d, s, s, ctx);
-                        glViewport(0, 0, ANativeWindow_getWidth(state->window), ANativeWindow_getHeight(state->window));
+                }
+                curX += 9 * scale;
+            }
+        }
+
+        void drawButton(const char* title, float x, float y, float w, float h) {
+            drawHudRect(x, y, w, h, 0.2f, 0.2f, 0.28f);
+            drawHudText(title, x + w/2.0f - (strlen(title)*4.5f*3.0f), y + h/2.0f - 12.0f, 3.0f, 1.0f, 1.0f, 1.0f);
+        }
+
+        // Подключаем логику, сгенерированную CubicLang
+        {LOGIC}
+
+        void android_main(struct android_app* state) {
+            state_global = state;
+            EGLDisplay d = eglGetDisplay(EGL_DEFAULT_DISPLAY);
+            eglInitialize(d, nullptr, nullptr);
+            EGLConfig cfg; EGLint n;
+            EGLint attrs[] = { EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT, EGL_BLUE_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_RED_SIZE, 8, EGL_NONE };
+            eglChooseConfig(d, attrs, &cfg, 1, &n);
+            EGLContext ctx = eglCreateContext(d, cfg, nullptr, new EGLint[3]{EGL_CONTEXT_CLIENT_VERSION, 2, EGL_NONE});
+            EGLSurface s = EGL_NO_SURFACE;
+
+            game_init();
+
+            while (1) {
+                int id, ev; struct android_poll_source* src;
+                while ((id = ALooper_pollOnce(state->window ? 0 : -1, nullptr, &ev, (void**)&src)) >= 0) {
+                    if (src) src->process(state, src);
+
+                    // Считывание ввода
+                    if (state->window && state->pendingInputEvent) {
+                        AInputEvent* event = (AInputEvent*)state->pendingInputEvent;
+                        int type = AInputEvent_getType(event);
+                        
+                        if (type == AINPUT_EVENT_TYPE_MOTION) {
+                            int action = AMotionEvent_getAction(event) & AMOTION_EVENT_ACTION_MASK;
+                            if (action == AMOTION_EVENT_ACTION_DOWN) {
+                                float tx = AMotionEvent_getX(event, 0);
+                                float ty = AMotionEvent_getY(event, 0);
+                                // Масштабируем пиксели тача в виртуальную сетку 1080x1920
+                                float vx = (tx / (float)g_scr_w) * 1080.0f;
+                                float vy = (ty / (float)g_scr_h) * 1920.0f;
+                                game_on_touch(vx, vy);
+                            }
+                        } 
+                        else if (type == AINPUT_EVENT_TYPE_KEY) {
+                            int action = AKeyEvent_getAction(event);
+                            if (action == AKEY_EVENT_ACTION_DOWN) {
+                                int key = AKeyEvent_getKeyCode(event);
+                                const char* charKey = "";
+                                if (key >= AKEYCODE_A && key <= AKEYCODE_Z) {
+                                    char buf[2] = { (char)('A' + (key - AKEYCODE_A)), '\\0' };
+                                    charKey = strdup(buf);
+                                } else if (key >= AKEYCODE_0 && key <= AKEYCODE_9) {
+                                    char buf[2] = { (char)('0' + (key - AKEYCODE_0)), '\\0' };
+                                    charKey = strdup(buf);
+                                } else if (key == AKEYCODE_DEL) {
+                                    charKey = "BACKSPACE";
+                                } else if (key == AKEYCODE_AT) {
+                                    charKey = "@";
+                                } else if (key == AKEYCODE_PERIOD) {
+                                    charKey = ".";
+                                }
+                                if (strlen(charKey) > 0) {
+                                    game_on_key(charKey);
+                                }
+                            }
+                        }
                     }
-                    if (s != EGL_NO_SURFACE) {
-                        g_auto_rot += 1.2f;
-                        {LOGIC}
-                        eglSwapBuffers(d, s);
-                    }
+                    if (state->destroyRequested) return;
+                }
+
+                if (state->window && s == EGL_NO_SURFACE) {
+                    s = eglCreateWindowSurface(d, cfg, state->window, nullptr);
+                    eglMakeCurrent(d, s, s, ctx);
+                    g_scr_w = ANativeWindow_getWidth(state->window);
+                    g_scr_h = ANativeWindow_getHeight(state->window);
+                    glViewport(0, 0, g_scr_w, g_scr_h);
+                }
+
+                if (s != EGL_NO_SURFACE) {
+                    glClearColor(g_bgR, g_bgG, g_bgB, 1.0f);
+                    glClear(GL_COLOR_BUFFER_BIT);
+
+                    game_update();
+                    game_draw_hud();
+
+                    eglSwapBuffers(d, s);
                 }
             }
         }
         """.replace("{LOGIC}", logic)
+
         with open("generated_main.cpp", "w") as f: f.write(template)
         EOF
         python3 transpiler.py
 
-    - name: Create Java Wrapper
+    - name: Create Native Java Firebase Helper
       run: |
+        # 2. Создаем MainActivity с методами асинхронного REST Firebase клиента на сокетах Java
         mkdir -p com/cubic/game
         cat << 'EOF' > com/cubic/game/MainActivity.java
         package com.cubic.game;
         import android.app.NativeActivity;
+        import android.os.Bundle;
+        import android.view.WindowManager;
+        import java.io.*;
+        import java.net.*;
+
         public class MainActivity extends NativeActivity {
+            public static String dbUrl = "";
+            public static String apiKey = "";
+            public static String authStatus = "IDLE";
+            public static String dbStatus = "IDLE";
+            public static float dbValue = 0.0f;
+
+            @Override
+            protected void onCreate(Bundle savedInstanceState) {
+                super.onCreate(savedInstanceState);
+                getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+            }
+
             static {
                 System.loadLibrary("main");
             }
+
+            public static void fb_init(String url, String key) {
+                dbUrl = url;
+                apiKey = key;
+                authStatus = "READY";
+            }
+
+            public static void fb_auth(final String email, final String password, final boolean isRegister) {
+                authStatus = "PENDING...";
+                new Thread(new Runnable() {
+                    @Override
+                    public void run() {
+                        try {
+                            String apiEndpoint = isRegister ? "signUp" : "signInWithPassword";
+                            URL url = new URL("https://identitytoolkit.googleapis.com/v1/accounts:" + apiEndpoint + "?key=" + apiKey);
+                            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+                            conn.setRequestMethod("POST");
+                            conn.setRequestProperty("Content-Type", "application/json");
+                            conn.setDoOutput(true);
+
+                            String jsonInputString = "{\"email\": \"" + email + "\", \"password\": \"" + password + "\", \"returnSecureToken\": true}";
+                            try(OutputStream os = conn.getOutputStream()) {
+                                byte[] input = jsonInputString.getBytes("utf-8");
+                                os.write(input, 0, input.length);			
+                            }
+
+                            int code = conn.getResponseCode();
+                            if (code == 200) {
+                                authStatus = "SUCCESS";
+                            } else {
+                                authStatus = "ERROR: " + code;
+                            }
+                        } catch (Exception e) {
+                            authStatus = "FAIL: " + e.getMessage();
+                        }
+                    }
+                }).start();
+            }
+
+            public static void fb_db_set(final String path, final float score) {
+                dbStatus = "SENDING...";
+                new Thread(new Runnable() {
+                    @Override
+                    public void run() {
+                        try {
+                            URL url = new URL(dbUrl + "/" + path + ".json");
+                            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+                            conn.setRequestMethod("PUT");
+                            conn.setRequestProperty("Content-Type", "application/json");
+                            conn.setDoOutput(true);
+
+                            String data = String.valueOf(score);
+                            try(OutputStream os = conn.getOutputStream()) {
+                                byte[] input = data.getBytes("utf-8");
+                                os.write(input, 0, input.length);			
+                            }
+
+                            int code = conn.getResponseCode();
+                            if (code == 200) {
+                                dbStatus = "SAVED";
+                            } else {
+                                dbStatus = "FAIL: " + code;
+                            }
+                        } catch (Exception e) {
+                            dbStatus = "ERROR: " + e.getMessage();
+                        }
+                    }
+                }).start();
+            }
+
+            public static void fb_db_get(final String path) {
+                dbStatus = "LOADING...";
+                new Thread(new Runnable() {
+                    @Override
+                    public void run() {
+                        try {
+                            URL url = new URL(dbUrl + "/" + path + ".json");
+                            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+                            conn.setRequestMethod("GET");
+
+                            int code = conn.getResponseCode();
+                            if (code == 200) {
+                                BufferedReader in = new BufferedReader(new InputStreamReader(conn.getInputStream()));
+                                String inputLine;
+                                StringBuilder response = new StringBuilder();
+                                while ((inputLine = in.readLine()) != null) {
+                                    response.append(inputLine);
+                                }
+                                in.close();
+                                try {
+                                    dbValue = Float.parseFloat(response.toString().trim());
+                                    dbStatus = "SUCCESS";
+                                } catch(Exception e) {
+                                    dbValue = 0;
+                                    dbStatus = "EMPTY";
+                                }
+                            } else {
+                                dbStatus = "FAIL: " + code;
+                            }
+                        } catch (Exception e) {
+                            dbStatus = "ERROR: " + e.getMessage();
+                        }
+                    }
+                }).start();
+            }
+
+            public static String getAuthStatus() { return authStatus; }
+            public static String getDbStatus() { return dbStatus; }
+            public static float getDbValue() { return dbValue; }
         }
         EOF
 
@@ -296,7 +575,8 @@ jobs:
         cat << 'EOF' > AndroidManifest.xml
         <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.cubic.game">
             <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="34" />
-            <application android:label="Cubic3D" android:hasCode="true" android:extractNativeLibs="true">
+            <uses-permission android:name="android.permission.INTERNET" />
+            <application android:label="Cubic 2D Database" android:hasCode="true" android:extractNativeLibs="true">
                 <activity android:name=".MainActivity" 
                           android:configChanges="orientation|keyboardHidden|screenSize"
                           android:exported="true">
@@ -313,10 +593,10 @@ jobs:
         $BT/aapt package -f -M AndroidManifest.xml -I $ANDROID_HOME/platforms/android-34/android.jar -F unsorted.apk staging/
         $BT/zipalign -p -f -v 4 unsorted.apk aligned.apk
         keytool -genkey -v -keystore my.keystore -alias cubic -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=C" -storepass 123456 -keypass 123456 || true
-        $BT/apksigner sign --ks my.keystore --ks-pass pass:123456 --out Cubic3D.apk aligned.apk
+        $BT/apksigner sign --ks my.keystore --ks-pass pass:123456 --out Cubic2D.apk aligned.apk
 
     - name: Upload
       uses: actions/upload-artifact@v4
       with:
-        name: Cubic3D-Engine
-        path: Cubic3D.apk
+        name: Cubic2D-Firebase-Build
+        path: Cubic2D.apk
