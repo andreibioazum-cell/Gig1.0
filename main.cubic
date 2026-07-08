@@ -1,3 +1,3 @@
-background 0.1 0.5 0.8
-rect 100 100 300 300 1.0 0.0 0.0
-button "Привет" 50 50 200 100
+background 0.1 0.1 0.15
+cube 0.0 0.0 -4.0 1.5 1.0 0.5 0.1
+button "Cubic 3D Demo" 50 50 500 120
