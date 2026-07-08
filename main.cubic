@@ -6,7 +6,6 @@ var activeInput = 1
 var myScore = 0
 var remoteHighScore = 0
 
-# Переменные ответа от сервера Firebase
 var authStatus = "IDLE"
 var dbStatus = "IDLE"
 
