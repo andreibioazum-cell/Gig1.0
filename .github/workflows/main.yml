@@ -1,4 +1,9 @@
-name: CubicLang Compiler and Builder
+background 0.1 0.1 0.15
+# Рисуем вращающийся оранжевый 3D-куб в центре экрана
+# Параметры: cube X Y Z размер R G B [угол_X угол_Y]
+# Если углы вращения не указаны, куб будет крутиться сам!
+cube 0.0 0.0 -4.0 1.5 1.0 0.5 0.1
+button "Cubic 3D Demo" 50 50 500 120
 
 on: [push, workflow_dispatch]
 
@@ -17,7 +22,7 @@ jobs:
 
     - name: Create Transpiler and Java Wrapper
       run: |
-        # 1. Скрипт транслятора (C++)
+        # 1. Скрипт транслятора (C++) с поддержкой 3D
         cat << 'EOF' > transpiler.py
         import os, re
         def compile_cubic(file_path):
@@ -32,14 +37,23 @@ jobs:
                 cmd = parts[0]
                 try:
                     if cmd == "background":
-                        cpp_code += f"glClearColor({parts[1]}, {parts[2]}, {parts[3]}, 1.0f); glClear(GL_COLOR_BUFFER_BIT);\n"
+                        # Очищаем буфер цвета И буфер глубины (Z-Buffer) для 3D
+                        cpp_code += f"glClearColor({parts[1]}, {parts[2]}, {parts[3]}, 1.0f); glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);\n"
                     elif cmd == "rect":
                         cpp_code += f"drawRect({parts[1]}, {parts[2]}, {parts[3]}, {parts[4]}, {parts[5]}, {parts[6]}, {parts[7]});\n"
                     elif cmd == "button":
                         txt = parts[1]; x, y, w = parts[2], parts[3], parts[4]
                         h = parts[5] if len(parts) > 5 else "100.0f"
                         cpp_code += f"drawButton({txt}, {x}, {y}, {w}, {h});\n"
-                except: pass
+                    elif cmd == "cube":
+                        # Формат: cube x y z size r g b [rotX rotY]
+                        x, y, z, size = parts[1], parts[2], parts[3], parts[4]
+                        r, g, b = parts[5], parts[6], parts[7]
+                        rx = parts[8] if len(parts) > 8 else "g_auto_rot"
+                        ry = parts[9] if len(parts) > 9 else "g_auto_rot * 0.6f"
+                        cpp_code += f"drawCube3D({x}, {y}, {z}, {size}, {r}, {g}, {b}, {rx}, {ry});\n"
+                except Exception as e: 
+                    print(f"Error parsing line '{line}': {e}")
             return cpp_code
 
         logic = compile_cubic('main.cubic')
@@ -47,17 +61,194 @@ jobs:
         #include <android_native_app_glue.h>
         #include <GLES2/gl2.h>
         #include <EGL/egl.h>
+        #include <math.h>
+
+        // Минимальная библиотека матричной математики для 3D
+        struct Mat4 {
+            float m[16];
+            static Mat4 identity() {
+                Mat4 mat = {0};
+                mat.m[0] = 1.0f; mat.m[5] = 1.0f; mat.m[10] = 1.0f; mat.m[15] = 1.0f;
+                return mat;
+            }
+            static Mat4 perspective(float fov, float aspect, float nearZ, float farZ) {
+                Mat4 mat = {0};
+                float f = 1.0f / tanf(fov * 0.5f * 3.14159f / 180.0f);
+                mat.m[0] = f / aspect;
+                mat.m[5] = f;
+                mat.m[10] = (farZ + nearZ) / (nearZ - farZ);
+                mat.m[11] = -1.0f;
+                mat.m[14] = (2.0f * farZ * nearZ) / (nearZ - farZ);
+                return mat;
+            }
+            static Mat4 translate(float x, float y, float z) {
+                Mat4 mat = identity();
+                mat.m[12] = x; mat.m[13] = y; mat.m[14] = z;
+                return mat;
+            }
+            static Mat4 rotateY(float angle) {
+                Mat4 mat = identity();
+                float rad = angle * 3.14159f / 180.0f;
+                float c = cosf(rad); float s = sinf(rad);
+                mat.m[0] = c;  mat.m[2] = -s;
+                mat.m[8] = s;  mat.m[10] = c;
+                return mat;
+            }
+            static Mat4 rotateX(float angle) {
+                Mat4 mat = identity();
+                float rad = angle * 3.14159f / 180.0f;
+                float c = cosf(rad); float s = sinf(rad);
+                mat.m[5] = c;  mat.m[6] = s;
+                mat.m[9] = -s; mat.m[10] = c;
+                return mat;
+            }
+            void multiply(const Mat4& b) {
+                Mat4 a = *this;
+                for (int r = 0; r < 4; r++) {
+                    for (int c = 0; c < 4; c++) {
+                        m[r + c*4] = a.m[r]*b.m[c*4] + a.m[r+4]*b.m[1+c*4] + a.m[r+8]*b.m[2+c*4] + a.m[r+12]*b.m[3+c*4];
+                    }
+                }
+            }
+        };
+
+        // Глобальные шейдеры для 3D
+        static GLuint s_program = 0;
+        static GLint s_mvp_loc = -1;
+        static GLint s_pos_loc = -1;
+        static GLint s_col_loc = -1;
+
+        void initShaders() {
+            if (s_program != 0) return;
+            const char* vs = 
+                "uniform mat4 u_mvp;\\n"
+                "attribute vec4 a_pos;\\n"
+                "attribute vec4 a_color;\\n"
+                "varying vec4 v_color;\\n"
+                "void main() {\\n"
+                "  gl_Position = u_mvp * a_pos;\\n"
+                "  v_color = a_color;\\n"
+                "}\\n";
+            const char* fs = 
+                "precision mediump float;\\n"
+                "varying vec4 v_color;\\n"
+                "void main() {\\n"
+                "  gl_FragColor = v_color;\\n"
+                "}\\n";
+            
+            GLuint vsh = glCreateShader(GL_VERTEX_SHADER);
+            glShaderSource(vsh, 1, &vs, NULL);
+            glCompileShader(vsh);
+            
+            GLuint fsh = glCreateShader(GL_FRAGMENT_SHADER);
+            glShaderSource(fsh, 1, &fs, NULL);
+            glCompileShader(fsh);
+            
+            s_program = glCreateProgram();
+            glAttachShader(s_program, vsh);
+            glAttachShader(s_program, fsh);
+            glLinkProgram(s_program);
+            
+            s_mvp_loc = glGetUniformLocation(s_program, "u_mvp");
+            s_pos_loc = glGetAttribLocation(s_program, "a_pos");
+            s_col_loc = glGetAttribLocation(s_program, "a_color");
+        }
+
         extern "C" {
             void drawRect(float x, float y, float w, float h, float r, float g, float b) {}
             void drawButton(const char* t, float x, float y, float w, float h) {}
+            
+            void drawCube3D(float x, float y, float z, float size, float r, float g, float b, float rx, float ry) {
+                initShaders();
+                glUseProgram(s_program);
+                glEnable(GL_DEPTH_TEST);
+                
+                // Получаем размеры экрана для правильного соотношения сторон (aspect ratio)
+                GLint viewport[4];
+                glGetIntegerv(GL_VIEWPORT, viewport);
+                float aspect = (viewport[2] > 0 && viewport[3] > 0) ? (float)viewport[2] / (float)viewport[3] : 1.0f;
+                
+                // Матричные преобразования
+                Mat4 proj = Mat4::perspective(45.0f, aspect, 0.1f, 100.0f);
+                Mat4 viewTranslate = Mat4::translate(x, y, z);
+                Mat4 rotX = Mat4::rotateX(rx);
+                Mat4 rotY = Mat4::rotateY(ry);
+                
+                Mat4 model = rotX;
+                model.multiply(rotY);
+                
+                Mat4 mvp = proj;
+                mvp.multiply(viewTranslate);
+                mvp.multiply(model);
+                
+                glUniformMatrix4fv(s_mvp_loc, 1, GL_FALSE, mvp.m);
+                
+                // Генерация вершин куба (36 вершин, по 2 треугольника на каждую из 6 граней)
+                float hs = size * 0.5f;
+                float v[] = {
+                    // Передняя грань (Z+)
+                    -hs, -hs,  hs,   hs, -hs,  hs,   hs,  hs,  hs,
+                    -hs, -hs,  hs,   hs,  hs,  hs,  -hs,  hs,  hs,
+                    // Задняя грань (Z-)
+                    -hs, -hs, -hs,  -hs,  hs, -hs,   hs,  hs, -hs,
+                    -hs, -hs, -hs,   hs,  hs, -hs,   hs, -hs, -hs,
+                    // Верхняя грань (Y+)
+                    -hs,  hs, -hs,  -hs,  hs,  hs,   hs,  hs,  hs,
+                    -hs,  hs, -hs,   hs,  hs,  hs,   hs,  hs, -hs,
+                    // Нижняя грань (Y-)
+                    -hs, -hs, -hs,   hs, -hs, -hs,   hs, -hs,  hs,
+                    -hs, -hs, -hs,   hs, -hs,  hs,  -hs, -hs,  hs,
+                    // Левая грань (X-)
+                    -hs, -hs, -hs,  -hs, -hs,  hs,  -hs,  hs,  hs,
+                    -hs, -hs, -hs,  -hs,  hs,  hs,  -hs,  hs, -hs,
+                    // Правая грань (X+)
+                     hs, -hs, -hs,   hs,  hs, -hs,   hs,  hs,  hs,
+                     hs, -hs, -hs,   hs,  hs,  hs,   hs, -hs,  hs
+                };
+                
+                // Цветовая заливка граней с фейковым затенением (для объема)
+                float c[36 * 4];
+                float shades[6] = { 1.0f, 0.5f, 0.8f, 0.4f, 0.6f, 0.7f }; // Множители яркости для каждой стороны
+                for(int face=0; face<6; ++face) {
+                    float s = shades[face];
+                    for(int vert=0; vert<6; ++vert) {
+                        int idx = (face * 6 + vert) * 4;
+                        c[idx + 0] = r * s; // R
+                        c[idx + 1] = g * s; // G
+                        c[idx + 2] = b * s; // B
+                        c[idx + 3] = 1.0f;  // Alpha
+                    }
+                }
+                
+                glEnableVertexAttribArray(s_pos_loc);
+                glVertexAttribPointer(s_pos_loc, 3, GL_FLOAT, GL_FALSE, 0, v);
+                
+                glEnableVertexAttribArray(s_col_loc);
+                glVertexAttribPointer(s_col_loc, 4, GL_FLOAT, GL_FALSE, 0, c);
+                
+                glDrawArrays(GL_TRIANGLES, 0, 36);
+                
+                glDisableVertexAttribArray(s_pos_loc);
+                glDisableVertexAttribArray(s_col_loc);
+            }
+
             void android_main(struct android_app* state) {
                 EGLDisplay d = eglGetDisplay(EGL_DEFAULT_DISPLAY);
                 eglInitialize(d, 0, 0);
                 EGLConfig cfg; EGLint n;
-                EGLint attrs[] = { EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT, EGL_BLUE_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_RED_SIZE, 8, EGL_NONE };
+                // Нам обязательно нужен Depth Buffer размерностью не менее 16 бит!
+                EGLint attrs[] = { 
+                    EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT, 
+                    EGL_BLUE_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_RED_SIZE, 8, 
+                    EGL_DEPTH_SIZE, 16, 
+                    EGL_NONE 
+                };
                 eglChooseConfig(d, attrs, &cfg, 1, &n);
                 EGLContext ctx = eglCreateContext(d, cfg, NULL, new EGLint[3]{EGL_CONTEXT_CLIENT_VERSION, 2, EGL_NONE});
                 EGLSurface s = EGL_NO_SURFACE;
+                
+                float g_auto_rot = 0.0f; // Переменная для авто-вращения
+
                 while (1) {
                     int id, ev; struct android_poll_source* src;
                     while ((id = ALooper_pollOnce(state->window ? 0 : -1, NULL, &ev, (void**)&src)) >= 0) {
@@ -67,8 +258,10 @@ jobs:
                     if (state->window && s == EGL_NO_SURFACE) {
                         s = eglCreateWindowSurface(d, cfg, state->window, NULL);
                         eglMakeCurrent(d, s, s, ctx);
+                        glViewport(0, 0, ANativeWindow_getWidth(state->window), ANativeWindow_getHeight(state->window));
                     }
                     if (s != EGL_NO_SURFACE) {
+                        g_auto_rot += 1.2f; // Скорость вращения куба
                         {LOGIC}
                         eglSwapBuffers(d, s);
                     }
@@ -98,7 +291,7 @@ jobs:
         GLUE=$ANDROID_NDK_ROOT/sources/android/native_app_glue
         FLAGS="-shared -fPIC -I$GLUE -landroid -llog -lGLESv2 -lEGL -static-libstdc++"
         
-        # Собираем сразу для двух типов процессоров (32 и 64 бита)
+        # Собираем под 64 и 32 бита
         $TC/aarch64-linux-android24-clang -c $GLUE/android_native_app_glue.c -o glue64.o -I$GLUE
         $TC/aarch64-linux-android24-clang++ generated_main.cpp glue64.o $FLAGS -o libmain64.so
         
@@ -107,7 +300,6 @@ jobs:
 
     - name: Compile Java to DEX
       run: |
-        # Используем android.jar для компиляции
         javac -d . -classpath $ANDROID_HOME/platforms/android-34/android.jar com/cubic/game/MainActivity.java
         $ANDROID_HOME/build-tools/34.0.0/d8 com/cubic/game/MainActivity.class --lib $ANDROID_HOME/platforms/android-34/android.jar --output .
 
@@ -121,7 +313,7 @@ jobs:
         cat << 'EOF' > AndroidManifest.xml
         <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.cubic.game">
             <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="34" />
-            <application android:label="CubicBattleX" android:hasCode="true" android:extractNativeLibs="true">
+            <application android:label="Cubic3D" android:hasCode="true" android:extractNativeLibs="true">
                 <activity android:name=".MainActivity" 
                           android:configChanges="orientation|keyboardHidden|screenSize"
                           android:exported="true">
@@ -138,10 +330,10 @@ jobs:
         $BT/aapt package -f -M AndroidManifest.xml -I $ANDROID_HOME/platforms/android-34/android.jar -F unsorted.apk staging/
         $BT/zipalign -p -f -v 4 unsorted.apk aligned.apk
         keytool -genkey -v -keystore my.keystore -alias cubic -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=C" -storepass 123456 -keypass 123456 || true
-        $BT/apksigner sign --ks my.keystore --ks-pass pass:123456 --out CubicBattleX.apk aligned.apk
+        $BT/apksigner sign --ks my.keystore --ks-pass pass:123456 --out Cubic3D.apk aligned.apk
 
     - name: Upload
       uses: actions/upload-artifact@v4
       with:
-        name: CubicBattleX-Tecno-Fix
-        path: CubicBattleX.apk
+        name: Cubic3D-Engine
+        path: Cubic3D.apk
