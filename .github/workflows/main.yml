@@ -1,11 +1,9 @@
-background 0.1 0.1 0.15
-# Рисуем вращающийся оранжевый 3D-куб в центре экрана
-# Параметры: cube X Y Z размер R G B [угол_X угол_Y]
-# Если углы вращения не указаны, куб будет крутиться сам!
-cube 0.0 0.0 -4.0 1.5 1.0 0.5 0.1
-button "Cubic 3D Demo" 50 50 500 120
+name: CubicLang 3D Builder
 
-on: [push, workflow_dispatch]
+on:
+  push:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
 
 jobs:
   build:
@@ -37,7 +35,6 @@ jobs:
                 cmd = parts[0]
                 try:
                     if cmd == "background":
-                        # Очищаем буфер цвета И буфер глубины (Z-Buffer) для 3D
                         cpp_code += f"glClearColor({parts[1]}, {parts[2]}, {parts[3]}, 1.0f); glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);\n"
                     elif cmd == "rect":
                         cpp_code += f"drawRect({parts[1]}, {parts[2]}, {parts[3]}, {parts[4]}, {parts[5]}, {parts[6]}, {parts[7]});\n"
@@ -46,7 +43,6 @@ jobs:
                         h = parts[5] if len(parts) > 5 else "100.0f"
                         cpp_code += f"drawButton({txt}, {x}, {y}, {w}, {h});\n"
                     elif cmd == "cube":
-                        # Формат: cube x y z size r g b [rotX rotY]
                         x, y, z, size = parts[1], parts[2], parts[3], parts[4]
                         r, g, b = parts[5], parts[6], parts[7]
                         rx = parts[8] if len(parts) > 8 else "g_auto_rot"
@@ -63,7 +59,6 @@ jobs:
         #include <EGL/egl.h>
         #include <math.h>
 
-        // Минимальная библиотека матричной математики для 3D
         struct Mat4 {
             float m[16];
             static Mat4 identity() {
@@ -112,7 +107,6 @@ jobs:
             }
         };
 
-        // Глобальные шейдеры для 3D
         static GLuint s_program = 0;
         static GLint s_mvp_loc = -1;
         static GLint s_pos_loc = -1;
@@ -163,12 +157,10 @@ jobs:
                 glUseProgram(s_program);
                 glEnable(GL_DEPTH_TEST);
                 
-                // Получаем размеры экрана для правильного соотношения сторон (aspect ratio)
                 GLint viewport[4];
                 glGetIntegerv(GL_VIEWPORT, viewport);
                 float aspect = (viewport[2] > 0 && viewport[3] > 0) ? (float)viewport[2] / (float)viewport[3] : 1.0f;
                 
-                // Матричные преобразования
                 Mat4 proj = Mat4::perspective(45.0f, aspect, 0.1f, 100.0f);
                 Mat4 viewTranslate = Mat4::translate(x, y, z);
                 Mat4 rotX = Mat4::rotateX(rx);
@@ -183,40 +175,32 @@ jobs:
                 
                 glUniformMatrix4fv(s_mvp_loc, 1, GL_FALSE, mvp.m);
                 
-                // Генерация вершин куба (36 вершин, по 2 треугольника на каждую из 6 граней)
                 float hs = size * 0.5f;
                 float v[] = {
-                    // Передняя грань (Z+)
                     -hs, -hs,  hs,   hs, -hs,  hs,   hs,  hs,  hs,
                     -hs, -hs,  hs,   hs,  hs,  hs,  -hs,  hs,  hs,
-                    // Задняя грань (Z-)
                     -hs, -hs, -hs,  -hs,  hs, -hs,   hs,  hs, -hs,
                     -hs, -hs, -hs,   hs,  hs, -hs,   hs, -hs, -hs,
-                    // Верхняя грань (Y+)
                     -hs,  hs, -hs,  -hs,  hs,  hs,   hs,  hs,  hs,
                     -hs,  hs, -hs,   hs,  hs,  hs,   hs,  hs, -hs,
-                    // Нижняя грань (Y-)
                     -hs, -hs, -hs,   hs, -hs, -hs,   hs, -hs,  hs,
                     -hs, -hs, -hs,   hs, -hs,  hs,  -hs, -hs,  hs,
-                    // Левая грань (X-)
                     -hs, -hs, -hs,  -hs, -hs,  hs,  -hs,  hs,  hs,
                     -hs, -hs, -hs,  -hs,  hs,  hs,  -hs,  hs, -hs,
-                    // Правая грань (X+)
                      hs, -hs, -hs,   hs,  hs, -hs,   hs,  hs,  hs,
                      hs, -hs, -hs,   hs,  hs,  hs,   hs, -hs,  hs
                 };
                 
-                // Цветовая заливка граней с фейковым затенением (для объема)
                 float c[36 * 4];
-                float shades[6] = { 1.0f, 0.5f, 0.8f, 0.4f, 0.6f, 0.7f }; // Множители яркости для каждой стороны
+                float shades[6] = { 1.0f, 0.5f, 0.8f, 0.4f, 0.6f, 0.7f };
                 for(int face=0; face<6; ++face) {
                     float s = shades[face];
                     for(int vert=0; vert<6; ++vert) {
                         int idx = (face * 6 + vert) * 4;
-                        c[idx + 0] = r * s; // R
-                        c[idx + 1] = g * s; // G
-                        c[idx + 2] = b * s; // B
-                        c[idx + 3] = 1.0f;  // Alpha
+                        c[idx + 0] = r * s;
+                        c[idx + 1] = g * s;
+                        c[idx + 2] = b * s;
+                        c[idx + 3] = 1.0f;
                     }
                 }
                 
@@ -236,7 +220,6 @@ jobs:
                 EGLDisplay d = eglGetDisplay(EGL_DEFAULT_DISPLAY);
                 eglInitialize(d, 0, 0);
                 EGLConfig cfg; EGLint n;
-                // Нам обязательно нужен Depth Buffer размерностью не менее 16 бит!
                 EGLint attrs[] = { 
                     EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT, 
                     EGL_BLUE_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_RED_SIZE, 8, 
@@ -247,7 +230,7 @@ jobs:
                 EGLContext ctx = eglCreateContext(d, cfg, NULL, new EGLint[3]{EGL_CONTEXT_CLIENT_VERSION, 2, EGL_NONE});
                 EGLSurface s = EGL_NO_SURFACE;
                 
-                float g_auto_rot = 0.0f; // Переменная для авто-вращения
+                float g_auto_rot = 0.0f;
 
                 while (1) {
                     int id, ev; struct android_poll_source* src;
@@ -261,7 +244,7 @@ jobs:
                         glViewport(0, 0, ANativeWindow_getWidth(state->window), ANativeWindow_getHeight(state->window));
                     }
                     if (s != EGL_NO_SURFACE) {
-                        g_auto_rot += 1.2f; // Скорость вращения куба
+                        g_auto_rot += 1.2f;
                         {LOGIC}
                         eglSwapBuffers(d, s);
                     }
@@ -273,7 +256,8 @@ jobs:
         EOF
         python3 transpiler.py
 
-        # 2. Создаем Java-обертку (нужна для совместимости с Tecno/Android 14)
+    - name: Create Java Wrapper
+      run: |
         mkdir -p com/cubic/game
         cat << 'EOF' > com/cubic/game/MainActivity.java
         package com.cubic.game;
@@ -291,7 +275,6 @@ jobs:
         GLUE=$ANDROID_NDK_ROOT/sources/android/native_app_glue
         FLAGS="-shared -fPIC -I$GLUE -landroid -llog -lGLESv2 -lEGL -static-libstdc++"
         
-        # Собираем под 64 и 32 бита
         $TC/aarch64-linux-android24-clang -c $GLUE/android_native_app_glue.c -o glue64.o -I$GLUE
         $TC/aarch64-linux-android24-clang++ generated_main.cpp glue64.o $FLAGS -o libmain64.so
         
