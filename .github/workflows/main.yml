@@ -599,4 +599,4 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: Cubic2D-Firebase-Build
-        path: Cubic2D.apk
+        path: Cubicc2D.apk
