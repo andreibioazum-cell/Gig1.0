@@ -25,19 +25,41 @@ jobs:
 
         def compile_gig(file_path):
             if not os.path.exists(file_path): return ""
-            with open(file_path, 'r', encoding='utf-8') as f: content = f.read()
+            with open(file_path, 'r', encoding='utf-8') as f: lines = f.readlines()
 
+            output_lines = []
+            in_event = False
+            for line in lines:
+                line_str = line.strip()
+                if not line_str or line_str.startswith("#"):
+                    output_lines.append(line)
+                    continue
+                
+                if line_str.startswith("event "):
+                    in_event = True
+                
+                if line_str == "}":
+                    in_event = False
+                
+                processed_line = line
+                if in_event and not line_str.endswith('{') and not line_str.endswith('}') and not line_str.startswith('if') and not line_str.startswith('while') and not line_str.startswith('else'):
+                    if not line_str.endswith(';'):
+                        processed_line = line.replace('\n', '') + ';\n'
+                
+                output_lines.append(processed_line)
+
+            content = "".join(output_lines)
             content = re.sub(r'#.*', '', content)
 
-            content = re.sub(r'\bvar\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*(".*?"|\d+\.\d+|\d+)', r'float \1 = \2;', content)
-            content = re.sub(r'\bvar\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*(.+)', r'float \1 = \2;', content)
-            content = re.sub(r'float\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*("(.*?)");', r'const char* \1 = \2;', content)
+            content = re.sub(r'\bvar\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*(".*?"|\'[^\']*\')', r'std::string \1 = \2;', content)
+            content = re.sub(r'\bvar\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*([0-9.]+)', r'float \1 = \2;', content)
+            content = re.sub(r'\bvar\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*(.+);', r'float \1 = \2;', content)
 
             content = re.sub(r'\bevent\s+init\s*\(\s*\)\s*\{', r'void game_init() {', content)
             content = re.sub(r'\bevent\s+update\s*\(\s*\)\s*\{', r'void game_update() {', content)
             content = re.sub(r'\bevent\s+draw_hud\s*\(\s*\)\s*\{', r'void game_draw_hud() {', content)
             content = re.sub(r'\bevent\s+on_touch\s*\(\s*([^,)]+)\s*,\s*([^)]+)\s*\)\s*\{', r'void game_on_touch(float \1, float \2) {', content)
-            content = re.sub(r'\bevent\s+on_key\s*\(\s*([^)]+)\s*\)\s*\{', r'void game_on_key(const char* \1) {', content)
+            content = re.sub(r'\bevent\s+on_key\s*\(\s*([^)]+)\s*\)\s*\{', r'void game_on_key(std::string \1) {', content)
 
             content = re.sub(r'background\(([^,]+),\s*([^,]+),\s*([^)]+)\)', r'g_bgR=\1; g_bgG=\2; g_bgB=\3;', content)
             content = re.sub(r'draw_rect\(([^,]+),\s*([^,]+),\s*([^,]+),\s*([^,]+),\s*([^,]+),\s*([^,]+),\s*([^)]+)\)', r'drawHudRect(\1, \2, \3, \4, \5, \6, \7);', content)
@@ -58,10 +80,14 @@ jobs:
             content = re.sub(r'fb_get_db_status\(\)', r'get_fb_db_status(state_global->activity)', content)
             content = re.sub(r'fb_get_db_value\(\)', r'get_fb_db_value(state_global->activity)', content)
 
+            content = re.sub(r'(".*?")\s*\+\s*([a-zA-Z0-9_().]+)', r'(to_str(\1) + to_str(\2))', content)
+            content = re.sub(r'([a-zA-Z0-9_().]+)\s*\+\s*(".*?")', r'(to_str(\1) + to_str(\2))', content)
+
             content = re.sub(r'\buserNick\b', 'g_userNick', content)
             content = re.sub(r'\buserPass\b', 'g_userPass', content)
 
             content = re.sub(r'sqrt\(([^)]+)\)', r'sqrtf(\1)', content)
+            content = content.replace(';;', ';')
 
             return content
 
@@ -76,8 +102,23 @@ jobs:
         #include <stdlib.h>
         #include <stdio.h>
         #include <string.h>
+        #include <string>
+        #include <sstream>
 
         static struct android_app* state_global = nullptr;
+
+        template<typename T>
+        std::string to_str(const T& val) {
+            std::ostringstream ss;
+            ss << val;
+            return ss.str();
+        }
+        inline std::string to_str(float val) {
+            if (val == (int)val) return std::to_string((int)val);
+            return std::to_string(val);
+        }
+        inline std::string to_str(const std::string& val) { return val; }
+        inline std::string to_str(const char* val) { return std::string(val); }
 
         static const unsigned char g_font[39][8] = {
             {0x3C,0x66,0x6E,0x7E,0x76,0x66,0x3C,0x00}, {0x18,0x18,0x38,0x18,0x18,0x18,0x7E,0x00},
@@ -111,93 +152,82 @@ jobs:
         float ndcX(float x) { return (x / 1080.0f) * 2.0f - 1.0f; }
         float ndcY(float y) { return 1.0f - (y / 1920.0f) * 2.0f; }
 
-        static const char* g_userNick = "";
-        static const char* g_userPass = "";
-
-        const char* string_pop_helper(const char* str) {
-            size_t len = strlen(str);
-            if (len == 0) return "";
-            char* new_str = (char*)malloc(len);
-            strncpy(new_str, str, len - 1);
-            new_str[len - 1] = '\\0';
-            return new_str;
+        std::string string_pop_helper(std::string str) {
+            if (str.empty()) return "";
+            return str.substr(0, str.length() - 1);
         }
 
-        const char* string_push_helper(const char* str, const char* addition) {
-            if (strlen(addition) == 0) return str;
-            char* new_str = (char*)malloc(strlen(str) + strlen(addition) + 1);
-            strcpy(new_str, str);
-            strcat(new_str, addition);
-            return new_str;
+        std::string string_push_helper(std::string str, std::string addition) {
+            return str + addition;
         }
 
-        void call_fb_init(ANativeActivity* activity, const char* url, const char* key) {
+        void call_fb_init(ANativeActivity* activity, std::string url, std::string key) {
             JNIEnv* env = nullptr;
             activity->vm->AttachCurrentThread(&env, nullptr);
             jclass clazz = env->GetObjectClass(activity->clazz);
             jmethodID method = env->GetStaticMethodID(clazz, "fb_init", "(Ljava/lang/String;Ljava/lang/String;)V");
-            jstring jurl = env->NewStringUTF(url);
-            jstring jkey = env->NewStringUTF(key);
+            jstring jurl = env->NewStringUTF(url.c_str());
+            jstring jkey = env->NewStringUTF(key.c_str());
             env->CallStaticVoidMethod(clazz, method, jurl, jkey);
             env->DeleteLocalRef(jurl); env->DeleteLocalRef(jkey);
             activity->vm->DetachCurrentThread();
         }
 
-        void call_fb_auth(ANativeActivity* activity, const char* nick, const char* pass, bool isRegister) {
+        void call_fb_auth(ANativeActivity* activity, std::string nick, std::string pass, bool isRegister) {
             JNIEnv* env = nullptr;
             activity->vm->AttachCurrentThread(&env, nullptr);
             jclass clazz = env->GetObjectClass(activity->clazz);
             jmethodID method = env->GetStaticMethodID(clazz, "fb_auth", "(Ljava/lang/String;Ljava/lang/String;Z)V");
-            jstring jnick = env->NewStringUTF(nick);
-            jstring jpass = env->NewStringUTF(pass);
+            jstring jnick = env->NewStringUTF(nick.c_str());
+            jstring jpass = env->NewStringUTF(pass.c_str());
             env->CallStaticVoidMethod(clazz, method, jnick, jpass, isRegister);
             env->DeleteLocalRef(jnick); env->DeleteLocalRef(jpass);
             activity->vm->DetachCurrentThread();
         }
 
-        void call_fb_db_set(ANativeActivity* activity, const char* path, float score) {
+        void call_fb_db_set(ANativeActivity* activity, std::string path, float score) {
             JNIEnv* env = nullptr;
             activity->vm->AttachCurrentThread(&env, nullptr);
             jclass clazz = env->GetObjectClass(activity->clazz);
             jmethodID method = env->GetStaticMethodID(clazz, "fb_db_set", "(Ljava/lang/String;F)V");
-            jstring jpath = env->NewStringUTF(path);
+            jstring jpath = env->NewStringUTF(path.c_str());
             env->CallStaticVoidMethod(clazz, method, jpath, score);
             env->DeleteLocalRef(jpath);
             activity->vm->DetachCurrentThread();
         }
 
-        void call_fb_db_get(ANativeActivity* activity, const char* path) {
+        void call_fb_db_get(ANativeActivity* activity, std::string path) {
             JNIEnv* env = nullptr;
             activity->vm->AttachCurrentThread(&env, nullptr);
             jclass clazz = env->GetObjectClass(activity->clazz);
             jmethodID method = env->GetStaticMethodID(clazz, "fb_db_get", "(Ljava/lang/String;)V");
-            jstring jpath = env->NewStringUTF(path);
+            jstring jpath = env->NewStringUTF(path.c_str());
             env->CallStaticVoidMethod(clazz, method, jpath);
             env->DeleteLocalRef(jpath);
             activity->vm->DetachCurrentThread();
         }
 
-        const char* get_fb_auth_status(ANativeActivity* activity) {
+        std::string get_fb_auth_status(ANativeActivity* activity) {
             JNIEnv* env = nullptr;
             activity->vm->AttachCurrentThread(&env, nullptr);
             jclass clazz = env->GetObjectClass(activity->clazz);
             jmethodID method = env->GetStaticMethodID(clazz, "getAuthStatus", "()Ljava/lang/String;");
             jstring jres = (jstring)env->CallStaticObjectMethod(clazz, method);
             const char* res = env->GetStringUTFChars(jres, nullptr);
-            const char* ret = strdup(res);
+            std::string ret(res);
             env->ReleaseStringUTFChars(jres, res);
             activity->vm->DetachCurrentThread();
             return ret;
         }
 
-        const char* get_fb_db_status(ANativeActivity* activity) {
+        std::string get_fb_db_status(ANativeActivity* activity) {
             JNIEnv* env = nullptr;
             activity->vm->AttachCurrentThread(&env, nullptr);
             jclass clazz = env->GetObjectClass(activity->clazz);
             jmethodID method = env->GetStaticMethodID(clazz, "getDbStatus", "()Ljava/lang/String;");
             jstring jres = (jstring)env->CallStaticObjectMethod(clazz, method);
             const char* res = env->GetStringUTFChars(jres, nullptr);
-            const char* ret = strdup(res);
+            std::string ret(res);
             env->ReleaseStringUTFChars(jres, res);
             activity->vm->DetachCurrentThread();
             return ret;
@@ -286,9 +316,9 @@ jobs:
             glDrawArrays(GL_TRIANGLE_FAN, 0, 34);
         }
 
-        void drawHudText(const char* text, float tx, float ty, float scale, float r, float g, float b) {
+        void drawHudText(std::string text, float tx, float ty, float scale, float r, float g, float b) {
             float curX = tx;
-            for (int i = 0; text[i] != '\\0'; ++i) {
+            for (size_t i = 0; i < text.length(); ++i) {
                 char c = text[i];
                 int charIdx = 36;
                 if (c >= '0' && c <= '9') charIdx = c - '0';
@@ -308,9 +338,9 @@ jobs:
             }
         }
 
-        void drawButton(const char* title, float x, float y, float w, float h) {
+        void drawButton(std::string title, float x, float y, float w, float h) {
             drawHudRect(x, y, w, h, 0.2f, 0.2f, 0.28f);
-            drawHudText(title, x + w/2.0f - (strlen(title)*4.5f*3.0f), y + h/2.0f - 12.0f, 3.0f, 1.0f, 1.0f, 1.0f);
+            drawHudText(title, x + w/2.0f - (title.length()*4.5f*3.0f), y + h/2.0f - 12.0f, 3.0f, 1.0f, 1.0f, 1.0f);
         }
 
         {LOGIC}
