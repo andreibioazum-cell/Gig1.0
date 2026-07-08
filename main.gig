@@ -1,5 +1,5 @@
 var screenState = 0
-var userEmail = ""
+var userNick = ""
 var userPass = ""
 var activeInput = 1
 var myScore = 0
@@ -34,7 +34,7 @@ event update() {
 
 event draw_hud() {
     if (screenState == 0) {
-        draw_text("CUBIC DATABASE LOGIN", 220.0, 200.0, 4.0, 0.9, 0.9, 1.0)
+        draw_text("GIG DATABASE LOGIN", 220.0, 200.0, 4.0, 0.9, 0.9, 1.0)
         draw_text("AUTH STATUS: " + authStatus, 150.0, 320.0, 2.5, 0.9, 0.8, 0.1)
         draw_text("TAP INPUT TO TYPE ON KEYBOARD", 150.0, 450.0, 2.0, 0.7, 0.7, 0.8)
 
@@ -44,7 +44,7 @@ event draw_hud() {
             draw_rect(145.0, 545.0, 790.0, 130.0, 0.3, 0.3, 0.4)
         }
         draw_rect(150.0, 550.0, 780.0, 120.0, 0.1, 0.1, 0.15)
-        draw_text("EMAIL: " + userEmail, 180.0, 590.0, 3.0, 1.0, 1.0, 1.0)
+        draw_text("NICKNAME: " + userNick, 180.0, 590.0, 3.0, 1.0, 1.0, 1.0)
 
         if (activeInput == 2) {
             draw_rect(145.0, 745.0, 790.0, 130.0, 0.1, 0.8, 0.1)
@@ -59,7 +59,7 @@ event draw_hud() {
     }
 
     if (screenState == 1) {
-        draw_text("WELCOME TO THE CUBIC WORLD", 180.0, 150.0, 3.5, 0.2, 0.9, 0.2)
+        draw_text("WELCOME TO THE GIG WORLD", 180.0, 150.0, 3.5, 0.2, 0.9, 0.2)
         draw_text("DATABASE SYNC STATUS: " + dbStatus, 150.0, 240.0, 2.0, 0.8, 0.8, 0.9)
         draw_text("MY CLICK SCORE: " + myScore, 150.0, 360.0, 3.0, 1.0, 1.0, 1.0)
         draw_text("WORLD HIGH SCORE: " + remoteHighScore, 150.0, 440.0, 3.0, 1.0, 0.85, 0.1)
@@ -90,7 +90,7 @@ event on_touch(touchX, touchY) {
             if (touchX <= 510.0) {
                 if (touchY >= 1000.0) {
                     if (touchY <= 1150.0) {
-                        fb_login(userEmail, userPass)
+                        fb_login(userNick, userPass)
                     }
                 }
             }
@@ -100,7 +100,7 @@ event on_touch(touchX, touchY) {
             if (touchX <= 930.0) {
                 if (touchY >= 1000.0) {
                     if (touchY <= 1150.0) {
-                        fb_register(userEmail, userPass)
+                        fb_register(userNick, userPass)
                     }
                 }
             }
@@ -143,9 +143,9 @@ event on_key(charKey) {
     if (screenState == 0) {
         if (activeInput == 1) {
             if (charKey == "BACKSPACE") {
-                userEmail = string_pop(userEmail)
+                userNick = string_pop(userNick)
             } else {
-                userEmail = string_push(userEmail, charKey)
+                userNick = string_push(userNick, charKey)
             }
         }
         if (activeInput == 2) {
