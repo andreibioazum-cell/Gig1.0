@@ -1,25 +1,166 @@
 
-background 0.05 0.05 0.1
+var screenState = 0 
+var userEmail = ""
+var userPass = ""
+var activeInput = 1
+var myScore = 0
+var remoteHighScore = 0
 
+# Переменные ответа от сервера Firebase
+var authStatus = "IDLE"
+var dbStatus = "IDLE"
 
-camera_orbit
-fog 0.12 0.05 0.05 0.1
+event init() {
+    background(0.12, 0.15, 0.22)
 
+    fb_init("https://cubic-battle-3-default-rtdb.firebaseio.com", "AIzaSyAsFakeKeyExample12345")
+}
 
-light 5.0 10.0 -5.0 1.0 0.95 0.85
+event update() {
 
-grid 30.0 1.5 0.15 0.3 0.6
-player 0.0 1.0 0.0 0.8 1.0 0.5 0.0
+    authStatus = fb_get_auth_status()
+    dbStatus = fb_get_db_status()
+    if (authStatus == "SUCCESS") {
 
-enemy -5.0 0.5 10.0 1.2 0.04 0.9 0.1 0.1
-enemy 5.0 0.5 -10.0 1.2 0.035 0.9 0.1 0.1
+        if (screenState == 0) {
+            screenState = 1 
+            fb_db_get("leaderboard/high_score")
+        }
+    }
 
-coin -3.0 0.6 4.0 0.5 1.0 0.8 0.0
-coin 3.0 0.6 6.0 0.5 1.0 0.8 0.0
-coin 0.0 0.6 12.0 0.5 1.0 0.8 0.0
-coin -6.0 0.6 -4.0 0.5 1.0 0.8 0.0
-coin 6.0 0.6 -8.0 0.5 1.0 0.8 0.0
+    if (dbStatus == "SUCCESS") {
+        var tempScore = fb_get_db_value()
+        if (tempScore > 0) {
+            remoteHighScore = tempScore
+        }
+    }
+}
 
-button "<-" 50 2000 200 200
-button "->" 300 2000 200 200
-button "JUMP" 800 2000 230 200
+event draw_hud() {
+
+    if (screenState == 0) {
+        draw_text("CUBIC DATABASE LOGIN", 220.0, 200.0, 4.0, 0.9, 0.9, 1.0)
+
+        draw_text("AUTH STATUS: " + authStatus, 150.0, 320.0, 2.5, 0.9, 0.8, 0.1)
+
+        draw_text("TAP INPUT TO TYPE ON KEYBOARD", 150.0, 450.0, 2.0, 0.7, 0.7, 0.8)
+
+        if (activeInput == 1) {
+            draw_rect(145.0, 545.0, 790.0, 130.0, 0.1, 0.8, 0.1)
+        } else {
+            draw_rect(145.0, 545.0, 790.0, 130.0, 0.3, 0.3, 0.4)
+        }
+        draw_rect(150.0, 550.0, 780.0, 120.0, 0.1, 0.1, 0.15)
+        draw_text("EMAIL: " + userEmail, 180.0, 590.0, 3.0, 1.0, 1.0, 1.0)
+
+        if (activeInput == 2) {
+            draw_rect(145.0, 745.0, 790.0, 130.0, 0.1, 0.8, 0.1)
+        } else {
+            draw_rect(145.0, 745.0, 790.0, 130.0, 0.3, 0.3, 0.4)
+        }
+        draw_rect(150.0, 750.0, 780.0, 120.0, 0.1, 0.1, 0.15)
+        draw_text("PASS: " + userPass, 180.0, 790.0, 3.0, 1.0, 1.0, 1.0)
+
+        draw_button("BTN_LOGIN", "LOG IN", 150.0, 1000.0, 360.0, 150.0)
+        draw_button("BTN_REG", "REGISTER", 570.0, 1000.0, 360.0, 150.0)
+    }
+
+    if (screenState == 1) {
+        draw_text("WELCOME TO THE CUBIC WORLD", 180.0, 150.0, 3.5, 0.2, 0.9, 0.2)
+        draw_text("DATABASE SYNC STATUS: " + dbStatus, 150.0, 240.0, 2.0, 0.8, 0.8, 0.9)
+
+        draw_text("MY CLICK SCORE: " + myScore, 150.0, 360.0, 3.0, 1.0, 1.0, 1.0)
+        draw_text("WORLD HIGH SCORE: " + remoteHighScore, 150.0, 440.0, 3.0, 1.0, 0.85, 0.1)
+
+        draw_text("TAP CIRCLE TO CLICK!", 320.0, 580.0, 2.2, 0.9, 0.8, 0.1)
+        draw_circle(540.0, 850.0, 200.0, 0.9, 0.75, 0.0) # Центр: 540, 850
+
+        draw_button("BTN_SAVE", "SAVE SCORE TO SERVER", 150.0, 1200.0, 780.0, 140.0)
+        draw_button("BTN_LOAD", "REFRESH HIGH SCORE", 150.0, 1400.0, 780.0, 140.0)
+    }
+}
+
+event on_touch(touchX, touchY) {
+    if (screenState == 0) {
+        # Клик по полю ввода Email
+        if (touchY >= 550.0) {
+            if (touchY <= 670.0) {
+                activeInput = 1
+                open_keyboard()
+            }
+        }
+        if (touchY >= 750.0) {
+            if (touchY <= 870.0) {
+                activeInput = 2
+                open_keyboard()
+            }
+        }
+
+        if (touchX >= 150.0) {
+            if (touchX <= 510.0) {
+                if (touchY >= 1000.0) {
+                    if (touchY <= 1150.0) {
+                        fb_login(userEmail, userPass)
+                    }
+                }
+            }
+        }
+
+        if (touchX >= 570.0) {
+            if (touchX <= 930.0) {
+                if (touchY >= 1000.0) {
+                    if (touchY <= 1150.0) {
+                        fb_register(userEmail, userPass)
+                    }
+                }
+            }
+        }
+    }
+
+    if (screenState == 1) {
+        var dx = touchX - 540.0
+        var dy = touchY - 850.0
+        var dist = sqrt(dx*dx + dy*dy)
+        if (dist < 200.0) {
+            myScore = myScore + 1
+        }
+        if (touchX >= 150.0) {
+            if (touchX <= 930.0) {
+                if (touchY >= 1200.0) {
+                    if (touchY <= 1340.0) {
+                        if (myScore > remoteHighScore) {
+                            fb_db_set("leaderboard/high_score", myScore)
+                        }
+                    }
+                }
+            }
+        }
+        if (touchX >= 150.0) {
+            if (touchX <= 930.0) {
+                if (touchY >= 1400.0) {
+                    if (touchY <= 1540.0) {
+                        fb_db_get("leaderboard/high_score")
+                    }
+                }
+            }
+        }
+    }
+}
+event on_key(charKey) {
+    if (screenState == 0) {
+        if (activeInput == 1) {
+            if (charKey == "BACKSPACE") {
+                userEmail = string_pop(userEmail)
+            } else {
+                userEmail = string_push(userEmail, charKey)
+            }
+        }
+        if (activeInput == 2) {
+            if (charKey == "BACKSPACE") {
+                userPass = string_pop(userPass)
+            } else {
+                userPass = string_push(userPass, charKey)
+            }
+        }
+    }
+}
