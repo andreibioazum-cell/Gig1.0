@@ -1,4 +1,4 @@
-name: Gig-AI 1.0 (Firebase + Safety)
+name: Gig-Flow Compiler 1.0
 
 on: [push, workflow_dispatch]
 
@@ -8,119 +8,75 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Set up Environment
-      uses: android-actions/setup-android@v3
-    - run: sdkmanager "platforms;android-34" "build-tools;34.0.0"
-
-    - name: Create AI-Transpiler
+    - name: Create Gig-Flow Transpiler
       run: |
         cat << 'EOF' > compiler.py
         import re
 
-        def transpile_gig(code):
-            # AI-Optimized Rules
+        def transpile(code):
+            # Правила трансформации Gig-Flow -> C++
             rules = [
-                (r'function\s+(\w+)\((.*)\)', r'void \1(\2) {'),
-                (r'local\s+(\w+)\s*=\s*new\.Rect', r'auto \1 = std::make_shared<Rect>'),
-                (r'firebase\.init\("(.*)"\)', r'Firebase::Initialize("\1");'),
-                (r'firebase\.save\("(.*)",\s*(.*)\)', r'Firebase::SetData("\1", \2);'),
-                (r'ui\.text\("(.*)",\s*(.*),\s*(.*)\)', r'TextEngine::Draw("\1", \2, \3);'),
-                (r'end', r'}'),
-                (r'if\s+(.*)\s+then', r'if(\1) {'),
-                (r'print\((.*)\)', r'LOGI("%s", std::to_string(\1).c_str());')
+                (r'entry\s+game\s*\{', r'void android_main(struct android_app* state) {'),
+                (r'var\s+(\w+)\s*=\s*Rect\((.*)\)', r'auto \1 = std::make_shared<Rect>(\2);'),
+                (r'var\s+(\w+)\s*=\s*(.*)', r'auto \1 = \2;'),
+                (r'loop\s*\{', r'while(1) {'),
+                (r'render->clear\((.*)\)', r'glClearColor(\1, 1.0f); glClear(GL_COLOR_BUFFER_BIT);'),
+                (r'render->drawRect\((.*),\s*color\.(\w+)\)', r'draw_rect_with_color(\1, "\2");'),
+                (r'render->text\((.*)\)', r'draw_ui_text(\1);'),
+                (r'input->tapped\((.*)\)', r'check_input_touch(state, \1)'),
+                (r'if\s+(.*)\s*\{', r'if(\1) {'),
             ]
             
-            cpp = code
+            cpp_code = code
             for p, r in rules:
-                cpp = re.sub(p, r, cpp)
-            return cpp
+                cpp_code = re.sub(p, r, cpp_code)
+            return cpp_code
 
         with open('main.gig', 'r') as f:
-            gig_code = f.read()
+            logic = transpile(f.read())
 
         header = """
         #include <android_native_app_glue.h>
         #include <GLES2/gl2.h>
-        #include <string>
         #include <memory>
-        #include <android/log.h>
+        #include <string>
 
-        #define LOGI(...) ((void)__android_log_print(ANDROID_LOG_INFO, "Gig-AI", __VA_ARGS__))
-
-        struct Rect { 
-            float x, y, w, h; 
-            Rect(float _x, float _y, float _w, float _h) : x(_x), y(_y), w(_w), h(_h) {}
-        };
-
-        namespace Firebase {
-            void Initialize(std::string id) { LOGI("Firebase Init: %s", id.c_str()); }
-            void SetData(std::string path, float val) { LOGI("Firebase Save: %s = %f", path.c_str(), val); }
-        }
-
-        namespace TextEngine {
-            void Draw(std::string t, float x, float y) { /* Render logic for GL_TEXT */ }
-        }
+        struct Rect { float x, y, w, h; Rect(float _x, float _y, float _w, float _h) : x(_x), y(_y), w(_w), h(_h) {} };
+        void draw_rect_with_color(std::shared_ptr<Rect> r, std::string color) { /* GL Logic */ }
+        void draw_ui_text(std::string t, float x, float y, float s) { /* GL Logic */ }
+        bool check_input_touch(android_app* s, std::shared_ptr<Rect> r) { return false; }
         """
 
-        logic = transpile_gig(gig_code)
         with open("main.cpp", "w") as f:
-            f.write(header + "extern \"C\" void android_main(struct android_app* state) {" + logic + "}")
-        EOF
-
-    - name: Write Example Gig Code (main.gig)
-      run: |
-        cat << 'EOF' > main.gig
-        -- Gig-AI: Простейший синтаксис для нейросетей
-        
-        function start()
-            -- Инициализация Firebase
-            firebase.init("gig-ai-app-123")
-            
-            -- Безопасное создание объекта (Smart Pointer)
-            local myPlayer = new.Rect(0, 0, 100, 100)
-            
-            -- Работа с текстом
-            ui.text("Gig-AI Engine Loaded", 50, 50)
-            
-            -- Сохранение данных в облако
-            firebase.save("users/score", 1000)
-            
-            if 10 > 5 then
-                print("Safety Check Passed")
-            end
-        end
+            f.write(header + logic)
         EOF
         python3 compiler.py
 
-    - name: Compile Fast & Safe
+    - name: Compile to Machine Code
       run: |
         TC=$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin
-        FLAGS="-shared -fPIC -O3 -std=c++17 -landroid -lGLESv2 -llog"
-        $TC/aarch64-linux-android24-clang++ main.cpp $ANDROID_NDK_ROOT/sources/android/native_app_glue/android_native_app_glue.c -I$ANDROID_NDK_ROOT/sources/android/native_app_glue $FLAGS -o libmain.so
+        $TC/aarch64-linux-android24-clang++ main.cpp $ANDROID_NDK_ROOT/sources/android/native_app_glue/android_native_app_glue.c \
+        -I$ANDROID_NDK_ROOT/sources/android/native_app_glue -shared -fPIC -Ofast -landroid -lGLESv2 -o libmain.so
 
-    - name: Build APK
+    - name: Assemble APK
       run: |
-        mkdir -p staging/lib/arm64-v8a
-        cp libmain.so staging/lib/arm64-v8a/
+        mkdir -p staging/lib/arm64-v8a && cp libmain.so staging/lib/arm64-v8a/
         cat << 'EOF' > AndroidManifest.xml
-        <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.gigai.app">
-            <application android:hasCode="false" android:label="Gig AI 1.0">
+        <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.gig.flow">
+            <application android:hasCode="false" android:label="Gig Flow Clicker">
                 <activity android:name="android.app.NativeActivity" android:exported="true">
                     <meta-data android:name="android.app.lib_name" android:value="main" />
-                    <intent-filter>
-                        <action android:name="android.intent.action.MAIN" />
-                        <category android:name="android.intent.category.LAUNCHER" />
-                    </intent-filter>
+                    <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
                 </activity>
             </application>
         </manifest>
         EOF
         $ANDROID_HOME/build-tools/34.0.0/aapt package -f -M AndroidManifest.xml -I $ANDROID_HOME/platforms/android-34/android.jar -F app.apk staging/
-        keytool -genkey -v -keystore my.keystore -alias gig -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=G" -storepass 123456 -keypass 123456 || true
-        $ANDROID_HOME/build-tools/34.0.0/apksigner sign --ks my.keystore --ks-pass pass:123456 --out GigAI.apk app.apk
+        keytool -genkey -v -keystore k.keystore -alias g -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=G" -storepass 123456 -keypass 123456 || true
+        $ANDROID_HOME/build-tools/34.0.0/apksigner sign --ks k.keystore --ks-pass pass:123456 --out GigFlow.apk app.apk
 
-    - name: Upload APK
+    - name: Upload
       uses: actions/upload-artifact@v4
       with:
-        name: Gig-AI-Build
-        path: GigAI.apk
+        name: Gig-Flow-APK
+        path: GigFlow.apk
