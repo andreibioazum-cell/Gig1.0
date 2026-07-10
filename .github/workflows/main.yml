@@ -1,4 +1,4 @@
-name: Gig-Flow Compiler 1.4 (Regex Precision)
+name: Gig-Flow Compiler 1.5 (Android 14 Ready)
 
 on: [push, workflow_dispatch]
 
@@ -8,51 +8,36 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
+    - name: Set up Environment
+      uses: android-actions/setup-android@v3
+    - run: sdkmanager "platforms;android-34" "build-tools;34.0.0"
+
     - name: Create Precise Transpiler
       run: |
         cat << 'EOF' > compiler.py
         import re
 
         def transpile(code):
-            # 1. Сначала обрабатываем специфичные вызовы API
-            # Вставляем state в input->tapped
             code = re.sub(r'input->tapped\((.*?)\)', r'check_input_touch(state, \1)', code)
-            
-            # Очистка экрана (4 аргумента для GL)
             code = re.sub(r'render->clear\((.*?),(.*?),(.*?)\)', r'glClearColor(\1, \2, \3, 1.0f); glClear(GL_COLOR_BUFFER_BIT)', code)
-            
-            # Замена методов (используем точные совпадения, чтобы не ломать слова)
             code = code.replace("render->drawRect", "draw_rect_with_color")
             code = code.replace("render->text", "draw_ui_text")
             code = code.replace("color.Green", '"green"')
-            
-            # 2. Типы данных и объекты (используем \b для защиты имен функций)
-            # Заменяем только отдельное слово Rect(...) на создание shared_ptr
             code = re.sub(r'\bRect\((.*?)\)', r'std::make_shared<Rect>(\1)', code)
             code = re.sub(r'\bvar\b', 'auto', code)
-            
-            # 3. Инфраструктура
             code = code.replace("entry game {", 'extern "C" void android_main(struct android_app* state) {')
             code = code.replace("loop {", 'while(1) {')
-            
-            # Условные операторы (оборачиваем условие в скобки)
             code = re.sub(r'if\s+(.*?)\s*\{', r'if (\1) {', code)
-            
-            # 4. Строки (Score: + score)
             code = re.sub(r'(\".*?\")\s*\+\s*(\w+)', r'std::string(\1) + std::to_string(\2)', code)
 
-            # 5. Чистка строк и точки с запятой
             final_lines = []
             for line in code.split('\n'):
                 s = line.strip()
                 if not s or s.endswith('{') or s.endswith('}') or s.startswith('//') or s.startswith('extern'):
                     final_lines.append(line)
                     continue
-                
-                if not s.endswith(';'):
-                    line += ';'
+                if not s.endswith(';'): line += ';'
                 final_lines.append(line)
-                
             return "\n".join(final_lines)
 
         with open('main.gig', 'r') as f:
@@ -64,47 +49,51 @@ jobs:
         #include <memory>
         #include <string>
 
-        struct Rect { 
-            float x, y, w, h; 
-            Rect(float _x, float _y, float _w, float _h) : x(_x), y(_y), w(_w), h(_h) {} 
-        };
-        
+        struct Rect { float x, y, w, h; Rect(float _x, float _y, float _w, float _h) : x(_x), y(_y), w(_w), h(_h) {} };
         void draw_rect_with_color(std::shared_ptr<Rect> r, std::string c) {}
         void draw_ui_text(std::string t, float x, float y, float s) {}
         bool check_input_touch(struct android_app* s, std::shared_ptr<Rect> r) { return false; }
         """
-
-        with open("main.cpp", "w") as f:
-            f.write(header + logic)
+        with open("main.cpp", "w") as f: f.write(header + logic)
         EOF
         python3 compiler.py
 
-    - name: Build Shared Library
+    - name: Build for Android 14 (API 34)
       run: |
         TC=$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin
         GLUE=$ANDROID_NDK_ROOT/sources/android/native_app_glue
-        $TC/aarch64-linux-android24-clang -c $GLUE/android_native_app_glue.c -o glue.o -I$GLUE
-        $TC/aarch64-linux-android24-clang++ main.cpp glue.o -I$GLUE -shared -fPIC -Ofast -landroid -lGLESv2 -o libmain.so
+        # Используем API 34 для компиляции
+        $TC/aarch64-linux-android34-clang -c $GLUE/android_native_app_glue.c -o glue.o -I$GLUE
+        $TC/aarch64-linux-android34-clang++ main.cpp glue.o -I$GLUE -shared -fPIC -Ofast -landroid -lGLESv2 -o libmain.so
 
-    - name: Final APK Assemble
+    - name: Create Modern Android Manifest
       run: |
-        mkdir -p staging/lib/arm64-v8a && cp libmain.so staging/lib/arm64-v8a/
         cat << 'EOF' > AndroidManifest.xml
         <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.gig.flow">
-            <application android:hasCode="false" android:label="Gig Flow 1.4">
-                <activity android:name="android.app.NativeActivity" android:exported="true">
+            <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="34" />
+            <application android:hasCode="false" android:label="Gig Flow 1.5" android:extractNativeLibs="true">
+                <activity android:name="android.app.NativeActivity"
+                          android:configChanges="orientation|keyboardHidden|screenSize"
+                          android:exported="true">
                     <meta-data android:name="android.app.lib_name" android:value="main" />
-                    <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+                    <intent-filter>
+                        <action android:name="android.intent.action.MAIN" />
+                        <category android:name="android.intent.category.LAUNCHER" />
+                    </intent-filter>
                 </activity>
             </application>
         </manifest>
         EOF
+
+    - name: Final APK Assemble (V2 Signing)
+      run: |
+        mkdir -p staging/lib/arm64-v8a && cp libmain.so staging/lib/arm64-v8a/
         $ANDROID_HOME/build-tools/34.0.0/aapt package -f -M AndroidManifest.xml -I $ANDROID_HOME/platforms/android-34/android.jar -F build.apk staging/
         keytool -genkey -v -keystore k.keystore -alias g -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=G" -storepass 123456 -keypass 123456 || true
-        $ANDROID_HOME/build-tools/34.0.0/apksigner sign --ks k.keystore --ks-pass pass:123456 --out GigFlow_v14.apk build.apk
+        $ANDROID_HOME/build-tools/34.0.0/apksigner sign --ks k.keystore --ks-pass pass:123456 --out GigFlow_v15.apk build.apk
 
-    - name: Upload APK
+    - name: Upload
       uses: actions/upload-artifact@v4
       with:
-        name: Gig-Flow-v14
-        path: GigFlow_v14.apk
+        name: Gig-Flow-Android14
+        path: GigFlow_v15.apk
