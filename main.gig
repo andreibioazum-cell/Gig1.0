@@ -1,3 +1,29 @@
-background 0.1 0.5 0.8
-rect 100 100 300 300 1.0 0.0 0.0
-button "Привет" 50 50 200 100
+// Gig-Flow: Чисто, быстро, современно
+entry game {
+    var score = 0
+    var power = 1
+    
+    // Объект кнопки: x, y, width, height
+    var mainButton = Rect(200, 400, 600, 600)
+
+    loop {
+        render->clear(0.05, 0.05, 0.1) // Глубокий синий фон
+
+        // Текст: строка, x, y, размер
+        render->text("CLICKS: " + score, 50, 100, 2.0)
+        render->text("POWER: " + power, 50, 200, 1.2)
+
+        // Рисуем кнопку (Цвет в формате HEX или RGBA)
+        render->drawRect(mainButton, color.Green)
+
+        // Обработка клика
+        if input->tapped(mainButton) {
+            score = score + power
+            
+            // Простая прогрессия
+            if score > 100 {
+                power = 2
+            }
+        }
+    }
+}
