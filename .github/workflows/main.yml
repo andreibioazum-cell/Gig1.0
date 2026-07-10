@@ -1,4 +1,4 @@
-name: Gig-Flow Compiler 1.3 (Final Fixes)
+name: Gig-Flow Compiler 1.4 (Regex Precision)
 
 on: [push, workflow_dispatch]
 
@@ -8,37 +8,40 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Create Strong Transpiler
+    - name: Create Precise Transpiler
       run: |
         cat << 'EOF' > compiler.py
         import re
 
         def transpile(code):
-            # 1. Структура и циклы
+            # 1. Сначала обрабатываем специфичные вызовы API
+            # Вставляем state в input->tapped
+            code = re.sub(r'input->tapped\((.*?)\)', r'check_input_touch(state, \1)', code)
+            
+            # Очистка экрана (4 аргумента для GL)
+            code = re.sub(r'render->clear\((.*?),(.*?),(.*?)\)', r'glClearColor(\1, \2, \3, 1.0f); glClear(GL_COLOR_BUFFER_BIT)', code)
+            
+            # Замена методов (используем точные совпадения, чтобы не ломать слова)
+            code = code.replace("render->drawRect", "draw_rect_with_color")
+            code = code.replace("render->text", "draw_ui_text")
+            code = code.replace("color.Green", '"green"')
+            
+            # 2. Типы данных и объекты (используем \b для защиты имен функций)
+            # Заменяем только отдельное слово Rect(...) на создание shared_ptr
+            code = re.sub(r'\bRect\((.*?)\)', r'std::make_shared<Rect>(\1)', code)
+            code = re.sub(r'\bvar\b', 'auto', code)
+            
+            # 3. Инфраструктура
             code = code.replace("entry game {", 'extern "C" void android_main(struct android_app* state) {')
             code = code.replace("loop {", 'while(1) {')
             
-            # 2. Переменные и создание объектов
-            # Rect(1,2,3,4) -> std::make_shared<Rect>(1,2,3,4)
-            code = re.sub(r'Rect\((.*?)\)', r'std::make_shared<Rect>(\1)', code)
-            code = re.sub(r'\bvar\b', 'auto', code)
+            # Условные операторы (оборачиваем условие в скобки)
+            code = re.sub(r'if\s+(.*?)\s*\{', r'if (\1) {', code)
             
-            # 3. Очистка экрана: добавляем 4-й аргумент (alpha = 1.0f)
-            code = re.sub(r'render->clear\((.*?),(.*?),(.*?)\)', r'glClearColor(\1, \2, \3, 1.0f); glClear(GL_COLOR_BUFFER_BIT)', code)
-            
-            # 4. Методы и API
-            code = code.replace("render->drawRect", "draw_rect_with_color")
-            code = code.replace("render->text", "draw_ui_text")
-            code = code.replace("input->tapped", "check_input_touch")
-            code = code.replace("color.Green", '"green"')
-            
-            # 5. Сложение строк: "Score: " + score -> std::string("Score: ") + std::to_string(score)
+            # 4. Строки (Score: + score)
             code = re.sub(r'(\".*?\")\s*\+\s*(\w+)', r'std::string(\1) + std::to_string(\2)', code)
 
-            # 6. Исправление IF: добавляем скобки (if condition { -> if (condition) {)
-            code = re.sub(r'if\s+(.*?)\s*\{', r'if (\1) {', code)
-
-            # 7. Построчная чистка
+            # 5. Чистка строк и точки с запятой
             final_lines = []
             for line in code.split('\n'):
                 s = line.strip()
@@ -46,7 +49,6 @@ jobs:
                     final_lines.append(line)
                     continue
                 
-                # Добавляем точку с запятой, если её нет
                 if not s.endswith(';'):
                     line += ';'
                 final_lines.append(line)
@@ -77,19 +79,19 @@ jobs:
         EOF
         python3 compiler.py
 
-    - name: Compile to Machine Code
+    - name: Build Shared Library
       run: |
         TC=$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin
         GLUE=$ANDROID_NDK_ROOT/sources/android/native_app_glue
         $TC/aarch64-linux-android24-clang -c $GLUE/android_native_app_glue.c -o glue.o -I$GLUE
         $TC/aarch64-linux-android24-clang++ main.cpp glue.o -I$GLUE -shared -fPIC -Ofast -landroid -lGLESv2 -o libmain.so
 
-    - name: Assemble Final APK
+    - name: Final APK Assemble
       run: |
         mkdir -p staging/lib/arm64-v8a && cp libmain.so staging/lib/arm64-v8a/
         cat << 'EOF' > AndroidManifest.xml
         <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.gig.flow">
-            <application android:hasCode="false" android:label="Gig Flow 1.3">
+            <application android:hasCode="false" android:label="Gig Flow 1.4">
                 <activity android:name="android.app.NativeActivity" android:exported="true">
                     <meta-data android:name="android.app.lib_name" android:value="main" />
                     <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
@@ -99,10 +101,10 @@ jobs:
         EOF
         $ANDROID_HOME/build-tools/34.0.0/aapt package -f -M AndroidManifest.xml -I $ANDROID_HOME/platforms/android-34/android.jar -F build.apk staging/
         keytool -genkey -v -keystore k.keystore -alias g -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=G" -storepass 123456 -keypass 123456 || true
-        $ANDROID_HOME/build-tools/34.0.0/apksigner sign --ks k.keystore --ks-pass pass:123456 --out GigFlow_Final.apk build.apk
+        $ANDROID_HOME/build-tools/34.0.0/apksigner sign --ks k.keystore --ks-pass pass:123456 --out GigFlow_v14.apk build.apk
 
-    - name: Upload
+    - name: Upload APK
       uses: actions/upload-artifact@v4
       with:
-        name: Gig-Flow-Fixed-APK
-        path: GigFlow_Final.apk
+        name: Gig-Flow-v14
+        path: GigFlow_v14.apk
