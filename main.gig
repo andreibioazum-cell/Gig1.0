@@ -1,65 +1,49 @@
 // ============================================
-// CUBIC BATTLE - Полная игра на языке Gig
-// Все модули в одном файле
+// CUBIC BATTLE - Оригинальная игра на Gig
 // ============================================
 
 entry game {
     // ============================================
-    // ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ
+    // ПЕРЕМЕННЫЕ
     // ============================================
-    // Состояние игры
-    var gameState = "lobby" // lobby, game, shop, credits, settings, mode_select, difficulty, room
-    var previousState = "lobby"
-    
-    // Игрок
+    var gameState = "lobby"
     var playerX = 400
     var playerY = 600
     var playerSize = 30
     var hp = 100
     var maxHp = 100
-    
-    // Счёт и прогресс
     var score = 0
-    var coins = 0
     var wave = 1
-    var gameTime = 0
     var gameOver = false
+    var gameTime = 0
     
-    // Пули
     var bullets = []
     var enemyBullets = []
-    
-    // Враги
     var enemies = []
     var enemySpawnTimer = 3
     
-    // Управление
     var aimX = 0
     var aimY = -1
     var shootCooldown = 0
     
-    // Способность
     var abilityCooldown = 0
     var abilityReady = true
     
-    // Настройки
     var musicOn = true
     var sfxOn = true
     var difficulty = "normal"
     var nickname = "Player"
     
-    // Магазин
-    var ownedSkins = []
-    var equippedSkin = "NONE"
-    var currentSkinIndex = 1
-    
-    // Онлайн
     var roomCode = ""
     var isOnline = false
-    var onlinePlayers = []
-    var onlineBullets = []
     
-    // UI элементы для разных экранов
+    // Текстуры
+    var texPlayer = loadTexture("player.png")
+    var texEnemy = loadTexture("enemy.png")
+    var texBullet = loadTexture("bullet.png")
+    var texBackground = loadTexture("background.png")
+    
+    // Кнопки
     var btnShoot = Rect(700, 500, 80, 80)
     var btnBack = Rect(20, 20, 140, 55)
     var btnAbility = Rect(580, 500, 60, 60)
@@ -71,7 +55,7 @@ entry game {
     render->text("Cubic Battle", 250, 200, 2.0)
     render->text("Loading...", 330, 300, 1.0)
     
-    // Загружаем сохранения
+    spawnWave()
     loadSaveData()
     
     // ============================================
@@ -79,14 +63,10 @@ entry game {
     // ============================================
     loop {
         if gameState == "lobby" {
-            updateLobby()
             drawLobby()
         } else if gameState == "game" {
             updateGame()
             drawGame()
-        } else if gameState == "shop" {
-            updateShop()
-            drawShop()
         } else if gameState == "credits" {
             drawCredits()
         } else if gameState == "settings" {
@@ -104,55 +84,46 @@ entry game {
 }
 
 // ============================================
-// ===== LOBBY (ГЛАВНОЕ МЕНЮ) =====
+// ЗАГРУЗКА ТЕКСТУР
 // ============================================
-func updateLobby() {
-    // Анимация для фона
+func loadTexture(path) {
+    return render->loadTexture(path)
 }
 
+// ============================================
+// LOBBY
+// ============================================
 func drawLobby() {
     render->clear(0.02, 0.05, 0.2)
     
-    // Заголовок
+    if texBackground {
+        render->drawTexture(texBackground, 0, 0, 800, 1200)
+    }
+    
     render->text("Cubic Battle", 250, 200, 2.5)
     render->text("Touch & Dodge", 300, 270, 0.8)
     
-    // Кнопки
-    // Play
     drawButton(Rect(290, 350, 220, 75), "PLAY", "blue")
     if input->tapped(Rect(290, 350, 220, 75)) {
         gameState = "mode_select"
         playButtonSound()
     }
     
-    // Shop
-    drawButton(Rect(290, 440, 220, 75), "SHOP", "blue")
+    drawButton(Rect(290, 440, 220, 75), "SETTINGS", "blue")
     if input->tapped(Rect(290, 440, 220, 75)) {
-        gameState = "shop"
-        playButtonSound()
-    }
-    
-    // Settings
-    drawButton(Rect(290, 530, 220, 75), "SETTINGS", "blue")
-    if input->tapped(Rect(290, 530, 220, 75)) {
         gameState = "settings"
         playButtonSound()
     }
     
-    // Credits
-    drawButton(Rect(290, 620, 220, 75), "CREDITS", "blue")
-    if input->tapped(Rect(290, 620, 220, 75)) {
+    drawButton(Rect(290, 530, 220, 75), "CREDITS", "blue")
+    if input->tapped(Rect(290, 530, 220, 75)) {
         gameState = "credits"
         playButtonSound()
     }
-    
-    // Инфо
-    render->text("Coins: " + coins, 20, 20, 0.6)
-    render->text("v1.0", 750, 20, 0.4)
 }
 
 // ============================================
-// ===== GAME (ИГРА) =====
+// GAME
 // ============================================
 func updateGame() {
     if gameOver {
@@ -164,7 +135,7 @@ func updateGame() {
     
     gameTime = gameTime + 0.016
     
-    // Движение игрока (джойстик)
+    // Движение
     var dx = 0
     var dy = 0
     if input->tapped(Rect(50, 550, 60, 60)) { dy = -1 }
@@ -183,16 +154,13 @@ func updateGame() {
     playerX = playerX + dx * 300 * 0.016
     playerY = playerY + dy * 300 * 0.016
     
-    // Границы
     if playerX < playerSize { playerX = playerSize }
     if playerX > 800 - playerSize { playerX = 800 - playerSize }
     if playerY < playerSize { playerY = playerSize }
     if playerY > 1200 - playerSize { playerY = 1200 - playerSize }
     
     // Стрельба
-    if shootCooldown > 0 {
-        shootCooldown = shootCooldown - 0.016
-    }
+    if shootCooldown > 0 { shootCooldown = shootCooldown - 0.016 }
     if shootCooldown <= 0 && input->tapped(btnShoot) {
         shootBullet()
         shootCooldown = 0.15
@@ -209,11 +177,9 @@ func updateGame() {
         abilityCooldown = 5
     }
     
-    // Обновление
     updateBullets()
     updateEnemies()
     
-    // Волны
     enemySpawnTimer = enemySpawnTimer - 0.016
     if enemySpawnTimer <= 0 {
         spawnWave()
@@ -222,14 +188,11 @@ func updateGame() {
         if enemySpawnTimer < 1.5 { enemySpawnTimer = 1.5 }
     }
     
-    // Game Over
     if hp <= 0 {
         hp = 0
         gameOver = true
-        saveStats()
     }
     
-    // Кнопка назад
     if input->tapped(btnBack) {
         gameState = "lobby"
         playButtonSound()
@@ -239,25 +202,30 @@ func updateGame() {
 func drawGame() {
     render->clear(0.02, 0.05, 0.2)
     
+    if texBackground {
+        render->drawTexture(texBackground, 0, 0, 800, 1200)
+    }
+    
     // Враги
     for i = 0; i < len(enemies); i = i + 1 {
         var e = enemies[i]
-        var color = "red"
-        if e.type == 1 { color = "orange" }
-        if e.type == 2 { color = "purple" }
-        
-        render->drawRect(Rect(e.x - e.size/2, e.y - e.size/2, e.size, e.size), color)
-        
-        // HP врага
+        if texEnemy {
+            render->drawTexture(texEnemy, e.x - e.size/2, e.y - e.size/2, e.size, e.size)
+        } else {
+            render->drawRect(Rect(e.x - e.size/2, e.y - e.size/2, e.size, e.size), "red")
+        }
         var hpPercent = e.hp / e.maxHp
         render->drawRect(Rect(e.x - 20, e.y - e.size/2 - 10, 40 * hpPercent, 4), "green")
-        render->drawRect(Rect(e.x - 20, e.y - e.size/2 - 10, 40, 4), "gray")
     }
     
     // Пули
     for i = 0; i < len(bullets); i = i + 1 {
         var b = bullets[i]
-        render->drawRect(Rect(b.x - 4, b.y - 4, 8, 8), "cyan")
+        if texBullet {
+            render->drawTexture(texBullet, b.x - 8, b.y - 8, 16, 16)
+        } else {
+            render->drawRect(Rect(b.x - 4, b.y - 4, 8, 8), "cyan")
+        }
     }
     for i = 0; i < len(enemyBullets); i = i + 1 {
         var b = enemyBullets[i]
@@ -265,7 +233,11 @@ func drawGame() {
     }
     
     // Игрок
-    render->drawRect(Rect(playerX - playerSize/2, playerY - playerSize/2, playerSize, playerSize), "blue")
+    if texPlayer {
+        render->drawTexture(texPlayer, playerX - playerSize/2, playerY - playerSize/2, playerSize, playerSize)
+    } else {
+        render->drawRect(Rect(playerX - playerSize/2, playerY - playerSize/2, playerSize, playerSize), "blue")
+    }
     
     // Глаза
     var eyeX = playerX + aimX * 10
@@ -274,7 +246,6 @@ func drawGame() {
     render->drawRect(Rect(eyeX + aimX * 3 - 2, eyeY + aimY * 3 - 2, 4, 4), "black")
     
     // UI
-    // HP
     var hpPercent = hp / maxHp
     render->drawRect(Rect(20, 20, 200, 20), "gray")
     if hpPercent > 0.5 {
@@ -285,260 +256,30 @@ func drawGame() {
         render->drawRect(Rect(22, 22, 196 * hpPercent, 16), "red")
     }
     render->text("HP: " + hp, 70, 20, 0.6)
-    
     render->text("Score: " + score, 20, 50, 0.6)
     render->text("Wave: " + wave, 20, 80, 0.6)
-    render->text("Coins: " + coins, 20, 110, 0.6)
     
-    // Кнопка стрельбы
     drawButton(btnShoot, "FIRE", "blue")
     
-    // Кнопка способности
     if abilityReady {
         drawButton(btnAbility, "C", "purple")
     } else {
         drawButton(btnAbility, "C", "gray")
     }
     
-    // Кнопка назад
     drawButton(btnBack, "Back", "blue")
     
-    // Game Over
     if gameOver {
-        render->clear(0, 0, 0)
+        render->clear(0, 0, 0, 0.7)
         render->text("GAME OVER", 250, 300, 3.0)
         render->text("Score: " + score, 320, 400, 1.5)
         render->text("Wave: " + wave, 330, 450, 1.5)
-        render->text("Coins: " + coins, 330, 500, 1.5)
         drawButton(Rect(300, 550, 200, 80), "Restart", "blue")
     }
 }
 
 // ============================================
-// ===== SHOP (МАГАЗИН) =====
-// ============================================
-func updateShop() {
-    if input->tapped(Rect(20, 20, 140, 55)) {
-        gameState = "lobby"
-        playButtonSound()
-    }
-}
-
-func drawShop() {
-    render->clear(0.02, 0.05, 0.2)
-    
-    render->text("SHOP", 350, 100, 2.0)
-    render->text("Coins: " + coins, 330, 160, 1.0)
-    
-    // Список скинов
-    var skins = ["NONE", "RED", "GREEN", "GOLD", "PURPLE"]
-    var prices = [0, 500, 300, 800, 600]
-    
-    for i = 0; i < len(skins); i = i + 1 {
-        var y = 230 + i * 80
-        var isOwned = isSkinOwned(skins[i])
-        var isEquipped = (equippedSkin == skins[i])
-        
-        drawButton(Rect(100, y, 600, 60), skins[i], "blue")
-        
-        if isEquipped {
-            render->text("EQUIPPED", 650, y + 15, 0.6)
-        } else if isOwned {
-            if input->tapped(Rect(100, y, 600, 60)) {
-                equippedSkin = skins[i]
-                saveSaveData()
-                playButtonSound()
-            }
-            render->text("OWNED", 650, y + 15, 0.6)
-        } else {
-            render->text("Price: " + prices[i], 650, y + 15, 0.6)
-            if input->tapped(Rect(100, y, 600, 60)) {
-                if coins >= prices[i] {
-                    coins = coins - prices[i]
-                    ownedSkins.push(skins[i])
-                    saveSaveData()
-                    playButtonSound()
-                }
-            }
-        }
-    }
-    
-    drawButton(Rect(20, 20, 140, 55), "Back", "blue")
-}
-
-// ============================================
-// ===== SETTINGS (НАСТРОЙКИ) =====
-// ============================================
-func updateSettings() {
-    // Кнопка музыки
-    if input->tapped(Rect(290, 300, 220, 75)) {
-        musicOn = !musicOn
-        saveSaveData()
-        playButtonSound()
-    }
-    
-    // Кнопка звуков
-    if input->tapped(Rect(290, 390, 220, 75)) {
-        sfxOn = !sfxOn
-        saveSaveData()
-        playButtonSound()
-    }
-    
-    // Назад
-    if input->tapped(Rect(20, 20, 140, 55)) {
-        gameState = "lobby"
-        playButtonSound()
-    }
-}
-
-func drawSettings() {
-    render->clear(0.02, 0.05, 0.2)
-    
-    render->text("SETTINGS", 300, 100, 2.0)
-    
-    var musicText = "MUSIC: " + (musicOn ? "ON" : "OFF")
-    drawButton(Rect(290, 300, 220, 75), musicText, "blue")
-    
-    var sfxText = "SOUNDS: " + (sfxOn ? "ON" : "OFF")
-    drawButton(Rect(290, 390, 220, 75), sfxText, "blue")
-    
-    render->text("Nickname: " + nickname, 300, 500, 0.8)
-    
-    drawButton(Rect(20, 20, 140, 55), "Back", "blue")
-}
-
-// ============================================
-// ===== CREDITS (ОБ АВТОРАХ) =====
-// ============================================
-func drawCredits() {
-    render->clear(0.02, 0.05, 0.2)
-    
-    render->text("CREDITS", 350, 100, 2.0)
-    render->text("Developers:", 350, 200, 1.0)
-    render->text("Dima Saraev – Creator", 320, 260, 0.8)
-    render->text("Dima Gustenyov – Owner", 320, 300, 0.8)
-    
-    drawButton(Rect(20, 20, 140, 55), "Back", "blue")
-    if input->tapped(Rect(20, 20, 140, 55)) {
-        gameState = "lobby"
-        playButtonSound()
-    }
-}
-
-// ============================================
-// ===== MODE SELECT (ВЫБОР РЕЖИМА) =====
-// ============================================
-func drawModeSelect() {
-    render->clear(0.02, 0.05, 0.2)
-    
-    render->text("SELECT MODE", 300, 150, 1.5)
-    
-    drawButton(Rect(290, 300, 220, 75), "SINGLEPLAYER", "blue")
-    if input->tapped(Rect(290, 300, 220, 75)) {
-        gameState = "difficulty"
-        playButtonSound()
-    }
-    
-    drawButton(Rect(290, 400, 220, 75), "MULTIPLAYER", "green")
-    if input->tapped(Rect(290, 400, 220, 75)) {
-        gameState = "room"
-        playButtonSound()
-    }
-    
-    drawButton(Rect(20, 20, 140, 55), "Back", "blue")
-    if input->tapped(Rect(20, 20, 140, 55)) {
-        gameState = "lobby"
-        playButtonSound()
-    }
-}
-
-// ============================================
-// ===== DIFFICULTY (СЛОЖНОСТЬ) =====
-// ============================================
-func drawDifficulty() {
-    render->clear(0.02, 0.05, 0.2)
-    
-    render->text("SELECT DIFFICULTY", 280, 150, 1.5)
-    
-    drawButton(Rect(290, 250, 220, 60), "EASY", "green")
-    if input->tapped(Rect(290, 250, 220, 60)) {
-        difficulty = "easy"
-        gameState = "game"
-        startGame()
-        playButtonSound()
-    }
-    
-    drawButton(Rect(290, 320, 220, 60), "NORMAL", "blue")
-    if input->tapped(Rect(290, 320, 220, 60)) {
-        difficulty = "normal"
-        gameState = "game"
-        startGame()
-        playButtonSound()
-    }
-    
-    drawButton(Rect(290, 390, 220, 60), "HARD", "red")
-    if input->tapped(Rect(290, 390, 220, 60)) {
-        difficulty = "hard"
-        gameState = "game"
-        startGame()
-        playButtonSound()
-    }
-    
-    drawButton(Rect(290, 460, 220, 60), "IMPOSSIBLE", "purple")
-    if input->tapped(Rect(290, 460, 220, 60)) {
-        difficulty = "impossible"
-        gameState = "game"
-        startGame()
-        playButtonSound()
-    }
-    
-    drawButton(Rect(20, 20, 140, 55), "Back", "blue")
-    if input->tapped(Rect(20, 20, 140, 55)) {
-        gameState = "mode_select"
-        playButtonSound()
-    }
-}
-
-// ============================================
-// ===== ROOM (КОМНАТЫ) =====
-// ============================================
-var roomInput = ""
-var roomStatus = ""
-
-func updateRoom() {
-    if input->tapped(Rect(290, 500, 220, 60)) {
-        roomCode = roomInput
-        isOnline = true
-        gameState = "game"
-        startGame()
-        playButtonSound()
-    }
-    
-    if input->tapped(Rect(20, 20, 140, 55)) {
-        gameState = "mode_select"
-        playButtonSound()
-    }
-}
-
-func drawRoom() {
-    render->clear(0.02, 0.05, 0.2)
-    
-    render->text("MULTIPLAYER ROOM", 280, 150, 1.5)
-    render->text("Enter room code:", 350, 250, 0.8)
-    
-    render->drawRect(Rect(290, 300, 220, 50), "gray")
-    render->text(roomInput, 320, 315, 0.8)
-    
-    drawButton(Rect(290, 400, 220, 60), "JOIN", "green")
-    drawButton(Rect(20, 20, 140, 55), "Back", "blue")
-    
-    if roomStatus != "" {
-        render->text(roomStatus, 320, 480, 0.6)
-    }
-}
-
-// ============================================
-// ===== ИГРОВЫЕ ФУНКЦИИ =====
+// ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
 // ============================================
 func shootBullet() {
     if gameOver { return }
@@ -546,10 +287,7 @@ func shootBullet() {
     
     var dx = aimX
     var dy = aimY
-    if dx == 0 && dy == 0 {
-        dx = 0
-        dy = -1
-    }
+    if dx == 0 && dy == 0 { dx = 0; dy = -1 }
     
     var bullet = {
         x: playerX,
@@ -576,7 +314,6 @@ func useAbility() {
                 e.hp = e.hp - 15
                 if e.hp <= 0 {
                     score = score + 10
-                    coins = coins + 5
                     enemies.remove(i)
                     i = i - 1
                 }
@@ -615,8 +352,7 @@ func spawnWave() {
             hp: 5 + wave * 2,
             maxHp: 5 + wave * 2,
             speed: 150 + wave * 10,
-            shootTimer: random(1, 3),
-            type: random(0, 2)
+            shootTimer: random(1, 3)
         }
         enemies.push(enemy)
     }
@@ -625,7 +361,6 @@ func spawnWave() {
 func updateEnemies() {
     for i = 0; i < len(enemies); i = i + 1 {
         var e = enemies[i]
-        
         var dx = playerX - e.x
         var dy = playerY - e.y
         var dist = sqrt(dx * dx + dy * dy)
@@ -685,7 +420,6 @@ func updateEnemies() {
                 
                 if e.hp <= 0 {
                     score = score + 10
-                    coins = coins + 5
                     enemies.remove(i)
                     i = i - 1
                     break
@@ -730,13 +464,12 @@ func updateBullets() {
     }
 }
 
-func startGame() {
+func restartGame() {
     playerX = 400
     playerY = 600
     hp = maxHp
     score = 0
     wave = 1
-    coins = 0
     bullets = []
     enemyBullets = []
     enemies = []
@@ -748,12 +481,158 @@ func startGame() {
     spawnWave()
 }
 
-func restartGame() {
-    startGame()
+// ============================================
+// SETTINGS
+// ============================================
+func updateSettings() {
+    if input->tapped(Rect(290, 300, 220, 75)) {
+        musicOn = !musicOn
+        playButtonSound()
+    }
+    if input->tapped(Rect(290, 390, 220, 75)) {
+        sfxOn = !sfxOn
+        playButtonSound()
+    }
+    if input->tapped(Rect(20, 20, 140, 55)) {
+        gameState = "lobby"
+        playButtonSound()
+    }
+}
+
+func drawSettings() {
+    render->clear(0.02, 0.05, 0.2)
+    render->text("SETTINGS", 300, 100, 2.0)
+    
+    var musicText = "MUSIC: " + (musicOn ? "ON" : "OFF")
+    drawButton(Rect(290, 300, 220, 75), musicText, "blue")
+    
+    var sfxText = "SOUNDS: " + (sfxOn ? "ON" : "OFF")
+    drawButton(Rect(290, 390, 220, 75), sfxText, "blue")
+    
+    render->text("Nickname: " + nickname, 300, 500, 0.8)
+    drawButton(Rect(20, 20, 140, 55), "Back", "blue")
 }
 
 // ============================================
-// ===== СИСТЕМНЫЕ ФУНКЦИИ =====
+// CREDITS
+// ============================================
+func drawCredits() {
+    render->clear(0.02, 0.05, 0.2)
+    render->text("CREDITS", 350, 100, 2.0)
+    render->text("Developers:", 350, 200, 1.0)
+    render->text("Dima Saraev – Creator", 320, 260, 0.8)
+    render->text("Dima Gustenyov – Owner", 320, 300, 0.8)
+    
+    drawButton(Rect(20, 20, 140, 55), "Back", "blue")
+    if input->tapped(Rect(20, 20, 140, 55)) {
+        gameState = "lobby"
+        playButtonSound()
+    }
+}
+
+// ============================================
+// MODE SELECT
+// ============================================
+func drawModeSelect() {
+    render->clear(0.02, 0.05, 0.2)
+    render->text("SELECT MODE", 300, 150, 1.5)
+    
+    drawButton(Rect(290, 300, 220, 75), "SINGLEPLAYER", "blue")
+    if input->tapped(Rect(290, 300, 220, 75)) {
+        gameState = "difficulty"
+        playButtonSound()
+    }
+    
+    drawButton(Rect(290, 400, 220, 75), "MULTIPLAYER", "green")
+    if input->tapped(Rect(290, 400, 220, 75)) {
+        gameState = "room"
+        playButtonSound()
+    }
+    
+    drawButton(Rect(20, 20, 140, 55), "Back", "blue")
+    if input->tapped(Rect(20, 20, 140, 55)) {
+        gameState = "lobby"
+        playButtonSound()
+    }
+}
+
+// ============================================
+// DIFFICULTY
+// ============================================
+func drawDifficulty() {
+    render->clear(0.02, 0.05, 0.2)
+    render->text("SELECT DIFFICULTY", 280, 150, 1.5)
+    
+    drawButton(Rect(290, 250, 220, 60), "EASY", "green")
+    if input->tapped(Rect(290, 250, 220, 60)) {
+        difficulty = "easy"
+        gameState = "game"
+        restartGame()
+        playButtonSound()
+    }
+    
+    drawButton(Rect(290, 320, 220, 60), "NORMAL", "blue")
+    if input->tapped(Rect(290, 320, 220, 60)) {
+        difficulty = "normal"
+        gameState = "game"
+        restartGame()
+        playButtonSound()
+    }
+    
+    drawButton(Rect(290, 390, 220, 60), "HARD", "red")
+    if input->tapped(Rect(290, 390, 220, 60)) {
+        difficulty = "hard"
+        gameState = "game"
+        restartGame()
+        playButtonSound()
+    }
+    
+    drawButton(Rect(290, 460, 220, 60), "IMPOSSIBLE", "purple")
+    if input->tapped(Rect(290, 460, 220, 60)) {
+        difficulty = "impossible"
+        gameState = "game"
+        restartGame()
+        playButtonSound()
+    }
+    
+    drawButton(Rect(20, 20, 140, 55), "Back", "blue")
+    if input->tapped(Rect(20, 20, 140, 55)) {
+        gameState = "mode_select"
+        playButtonSound()
+    }
+}
+
+// ============================================
+// ROOM
+// ============================================
+var roomInput = ""
+
+func updateRoom() {
+    if input->tapped(Rect(290, 400, 220, 60)) {
+        roomCode = roomInput
+        isOnline = true
+        gameState = "game"
+        restartGame()
+        playButtonSound()
+    }
+    if input->tapped(Rect(20, 20, 140, 55)) {
+        gameState = "mode_select"
+        playButtonSound()
+    }
+}
+
+func drawRoom() {
+    render->clear(0.02, 0.05, 0.2)
+    render->text("MULTIPLAYER ROOM", 280, 150, 1.5)
+    render->text("Enter room code:", 350, 250, 0.8)
+    render->drawRect(Rect(290, 300, 220, 50), "gray")
+    render->text(roomInput, 320, 315, 0.8)
+    drawButton(Rect(290, 400, 220, 60), "JOIN", "green")
+    drawButton(Rect(20, 20, 140, 55), "Back", "blue")
+}
+
+// ============================================
+// СИСТЕМНЫЕ ФУНКЦИИ
 // ============================================
 func drawButton(rect, text, color) {
     render->drawRect(rect, color)
@@ -761,30 +640,13 @@ func drawButton(rect, text, color) {
 }
 
 func playButtonSound() {
-    // Эмуляция звука
+    // звук
 }
 
 func loadSaveData() {
-    // Загрузка сохранений
-    coins = 0
-    ownedSkins = ["NONE"]
-    equippedSkin = "NONE"
     nickname = "Player"
 }
 
-func saveSaveData() {
-    // Сохранение
-}
-
 func saveStats() {
-    // Сохранение статистики
-}
-
-func isSkinOwned(skin) {
-    for i = 0; i < len(ownedSkins); i = i + 1 {
-        if ownedSkins[i] == skin {
-            return true
-        }
-    }
-    return false
+    // сохранение
 }
