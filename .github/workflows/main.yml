@@ -1,4 +1,4 @@
-name: Gig-Flow Compiler 1.0
+name: Gig-Flow Compiler 1.1 (Fixed)
 
 on: [push, workflow_dispatch]
 
@@ -14,9 +14,11 @@ jobs:
         import re
 
         def transpile(code):
-            # Правила трансформации Gig-Flow -> C++
+            # 1. Обработка сложения строк: "text" + score -> "text" + std::to_string(score)
+            code = re.sub(r'(\".*?\")\s*\+\s*(\w+)', r'std::string(\1) + std::to_string(\2)', code)
+            
             rules = [
-                (r'entry\s+game\s*\{', r'void android_main(struct android_app* state) {'),
+                (r'entry\s+game\s*\{', r'extern "C" void android_main(struct android_app* state) {'),
                 (r'var\s+(\w+)\s*=\s*Rect\((.*)\)', r'auto \1 = std::make_shared<Rect>(\2);'),
                 (r'var\s+(\w+)\s*=\s*(.*)', r'auto \1 = \2;'),
                 (r'loop\s*\{', r'while(1) {'),
@@ -25,12 +27,25 @@ jobs:
                 (r'render->text\((.*)\)', r'draw_ui_text(\1);'),
                 (r'input->tapped\((.*)\)', r'check_input_touch(state, \1)'),
                 (r'if\s+(.*)\s*\{', r'if(\1) {'),
+                (r'(\w+)\s*=\s*(\w+)\s*\+\s*(\w+)', r'\1 = \2 + \3;'), # Добавляем ; к сложению
             ]
             
-            cpp_code = code
-            for p, r in rules:
-                cpp_code = re.sub(p, r, cpp_code)
-            return cpp_code
+            lines = []
+            for line in code.split('\n'):
+                line = line.strip()
+                if not line or line.endswith('{') or line.endswith('}') or line.startswith('//'):
+                    lines.append(line)
+                    continue
+                
+                for p, r in rules:
+                    line = re.sub(p, r, line)
+                
+                # Добавляем точку с запятой, если её нет и это не if/while
+                if not line.endswith(';') and not line.endswith('{') and not line.endswith('}'):
+                    line += ';'
+                lines.append(line)
+                
+            return "\n".join(lines)
 
         with open('main.gig', 'r') as f:
             logic = transpile(f.read())
@@ -42,8 +57,8 @@ jobs:
         #include <string>
 
         struct Rect { float x, y, w, h; Rect(float _x, float _y, float _w, float _h) : x(_x), y(_y), w(_w), h(_h) {} };
-        void draw_rect_with_color(std::shared_ptr<Rect> r, std::string color) { /* GL Logic */ }
-        void draw_ui_text(std::string t, float x, float y, float s) { /* GL Logic */ }
+        void draw_rect_with_color(std::shared_ptr<Rect> r, std::string color) {}
+        void draw_ui_text(std::string t, float x, float y, float s) {}
         bool check_input_touch(android_app* s, std::shared_ptr<Rect> r) { return false; }
         """
 
@@ -52,18 +67,23 @@ jobs:
         EOF
         python3 compiler.py
 
-    - name: Compile to Machine Code
+    - name: Compile Machine Code
       run: |
         TC=$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin
-        $TC/aarch64-linux-android24-clang++ main.cpp $ANDROID_NDK_ROOT/sources/android/native_app_glue/android_native_app_glue.c \
-        -I$ANDROID_NDK_ROOT/sources/android/native_app_glue -shared -fPIC -Ofast -landroid -lGLESv2 -o libmain.so
+        GLUE=$ANDROID_NDK_ROOT/sources/android/native_app_glue
+        
+        # Компилируем C-часть отдельно (важно!)
+        $TC/aarch64-linux-android24-clang -c $GLUE/android_native_app_glue.c -o glue.o -I$GLUE
+        
+        # Компилируем C++ часть и линкуем
+        $TC/aarch64-linux-android24-clang++ main.cpp glue.o -I$GLUE -shared -fPIC -Ofast -landroid -lGLESv2 -o libmain.so
 
     - name: Assemble APK
       run: |
         mkdir -p staging/lib/arm64-v8a && cp libmain.so staging/lib/arm64-v8a/
         cat << 'EOF' > AndroidManifest.xml
         <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.gig.flow">
-            <application android:hasCode="false" android:label="Gig Flow Clicker">
+            <application android:hasCode="false" android:label="Gig Flow 1.1">
                 <activity android:name="android.app.NativeActivity" android:exported="true">
                     <meta-data android:name="android.app.lib_name" android:value="main" />
                     <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
@@ -71,12 +91,12 @@ jobs:
             </application>
         </manifest>
         EOF
-        $ANDROID_HOME/build-tools/34.0.0/aapt package -f -M AndroidManifest.xml -I $ANDROID_HOME/platforms/android-34/android.jar -F app.apk staging/
+        $ANDROID_HOME/build-tools/34.0.0/aapt package -f -M AndroidManifest.xml -I $ANDROID_HOME/platforms/android-34/android.jar -F unsorted.apk staging/
         keytool -genkey -v -keystore k.keystore -alias g -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=G" -storepass 123456 -keypass 123456 || true
-        $ANDROID_HOME/build-tools/34.0.0/apksigner sign --ks k.keystore --ks-pass pass:123456 --out GigFlow.apk app.apk
+        $ANDROID_HOME/build-tools/34.0.0/apksigner sign --ks k.keystore --ks-pass pass:123456 --out GigFlow.apk unsorted.apk
 
     - name: Upload
       uses: actions/upload-artifact@v4
       with:
-        name: Gig-Flow-APK
+        name: Gig-Flow-Fixed-APK
         path: GigFlow.apk
