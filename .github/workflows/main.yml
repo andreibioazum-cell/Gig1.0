@@ -1,4 +1,4 @@
-name: Gig-Flow Compiler 1.8 Fixed
+name: Gig-Flow Compiler 1.9 (Linker Fix)
 
 on:
   push:
@@ -109,8 +109,9 @@ jobs:
       run: |
         TC=$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin
         GLUE=$ANDROID_NDK_ROOT/sources/android/native_app_glue
-        $TC/aarch64-linux-android34-clang -c $GLUE/android_native_app_glue.c -o glue.o -I$GLUE
-        $TC/aarch64-linux-android34-clang++ main.cpp glue.o -I$GLUE -shared -O3 -landroid -lGLESv2 -lEGL -o libmain.so
+        # ВЕРНУЛ ФЛАГ -fPIC СЮДА:
+        $TC/aarch64-linux-android34-clang -c $GLUE/android_native_app_glue.c -o glue.o -I$GLUE -fPIC
+        $TC/aarch64-linux-android34-clang++ main.cpp glue.o -I$GLUE -shared -fPIC -O3 -landroid -lGLESv2 -lEGL -o libmain.so
 
     - name: Package
       run: |
@@ -119,7 +120,7 @@ jobs:
         <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.gig.flow">
           <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="34"/>
           <application android:hasCode="false" android:label="Gig" android:extractNativeLibs="true">
-            <activity android:name="android.app.NativeActivity" android:exported="true">
+            <activity android:name="android.app.NativeActivity" android:exported="true" android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
               <meta-data android:name="android.app.lib_name" android:value="main"/>
               <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
             </activity>
