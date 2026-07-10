@@ -1,4 +1,4 @@
-name: Gig-Flow Compiler 1.1 (Fixed)
+name: Gig-Flow Compiler 1.2 (Ultra Fix)
 
 on: [push, workflow_dispatch]
 
@@ -8,47 +8,51 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Create Gig-Flow Transpiler
+    - name: Create Reliable Transpiler
       run: |
         cat << 'EOF' > compiler.py
         import re
 
         def transpile(code):
-            # 1. Обработка сложения строк: "text" + score -> "text" + std::to_string(score)
+            # 1. Глобальные замены структуры
+            code = code.replace("entry game {", 'extern "C" void android_main(struct android_app* state) {')
+            code = code.replace("loop {", 'while(1) {')
+            
+            # 2. Замена var на auto
+            code = re.sub(r'\bvar\b', 'auto', code)
+            
+            # 3. Обработка методов -> на .
+            code = code.replace("->", ".")
+            
+            # 4. Обработка сложения строк (улучшенная)
             code = re.sub(r'(\".*?\")\s*\+\s*(\w+)', r'std::string(\1) + std::to_string(\2)', code)
+
+            # 5. Специфичные замены для API
+            code = code.replace("render.clear", "glClearColor")
+            code = code.replace("render.drawRect", "draw_rect_with_color")
+            code = code.replace("render.text", "draw_ui_text")
+            code = code.replace("input.tapped", "check_input_touch")
+            code = code.replace("color.Green", '"green"')
             
-            rules = [
-                (r'entry\s+game\s*\{', r'extern "C" void android_main(struct android_app* state) {'),
-                (r'var\s+(\w+)\s*=\s*Rect\((.*)\)', r'auto \1 = std::make_shared<Rect>(\2);'),
-                (r'var\s+(\w+)\s*=\s*(.*)', r'auto \1 = \2;'),
-                (r'loop\s*\{', r'while(1) {'),
-                (r'render->clear\((.*)\)', r'glClearColor(\1, 1.0f); glClear(GL_COLOR_BUFFER_BIT);'),
-                (r'render->drawRect\((.*),\s*color\.(\w+)\)', r'draw_rect_with_color(\1, "\2");'),
-                (r'render->text\((.*)\)', r'draw_ui_text(\1);'),
-                (r'input->tapped\((.*)\)', r'check_input_touch(state, \1)'),
-                (r'if\s+(.*)\s*\{', r'if(\1) {'),
-                (r'(\w+)\s*=\s*(\w+)\s*\+\s*(\w+)', r'\1 = \2 + \3;'), # Добавляем ; к сложению
-            ]
-            
-            lines = []
+            # 6. Построчная обработка (добавление ; и очистка)
+            final_lines = []
             for line in code.split('\n'):
-                line = line.strip()
-                if not line or line.endswith('{') or line.endswith('}') or line.startswith('//'):
-                    lines.append(line)
+                stripped = line.strip()
+                if not stripped or stripped.endswith('{') or stripped.endswith('}') or stripped.startswith('//') or stripped.startswith('extern'):
+                    final_lines.append(line)
                     continue
                 
-                for p, r in rules:
-                    line = re.sub(p, r, line)
-                
-                # Добавляем точку с запятой, если её нет и это не if/while
-                if not line.endswith(';') and not line.endswith('{') and not line.endswith('}'):
+                # Если в строке нет точки с запятой в конце - добавляем
+                if not stripped.endswith(';') and not stripped.endswith('{') and not stripped.endswith('}'):
                     line += ';'
-                lines.append(line)
+                final_lines.append(line)
                 
-            return "\n".join(lines)
+            return "\n".join(final_lines)
 
         with open('main.gig', 'r') as f:
-            logic = transpile(f.read())
+            gig_source = f.read()
+
+        logic = transpile(gig_source)
 
         header = """
         #include <android_native_app_glue.h>
@@ -56,10 +60,14 @@ jobs:
         #include <memory>
         #include <string>
 
-        struct Rect { float x, y, w, h; Rect(float _x, float _y, float _w, float _h) : x(_x), y(_y), w(_w), h(_h) {} };
-        void draw_rect_with_color(std::shared_ptr<Rect> r, std::string color) {}
+        struct Rect { 
+            float x, y, w, h; 
+            Rect(float _x, float _y, float _w, float _h) : x(_x), y(_y), w(_w), h(_h) {} 
+        };
+        
+        void draw_rect_with_color(std::shared_ptr<Rect> r, std::string c) {}
         void draw_ui_text(std::string t, float x, float y, float s) {}
-        bool check_input_touch(android_app* s, std::shared_ptr<Rect> r) { return false; }
+        bool check_input_touch(struct android_app* s, std::shared_ptr<Rect> r) { return false; }
         """
 
         with open("main.cpp", "w") as f:
@@ -67,36 +75,39 @@ jobs:
         EOF
         python3 compiler.py
 
-    - name: Compile Machine Code
+    - name: Compile to Shared Library
       run: |
         TC=$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin
         GLUE=$ANDROID_NDK_ROOT/sources/android/native_app_glue
         
-        # Компилируем C-часть отдельно (важно!)
+        # Компилируем glue (C)
         $TC/aarch64-linux-android24-clang -c $GLUE/android_native_app_glue.c -o glue.o -I$GLUE
         
-        # Компилируем C++ часть и линкуем
+        # Компилируем основной код (C++)
         $TC/aarch64-linux-android24-clang++ main.cpp glue.o -I$GLUE -shared -fPIC -Ofast -landroid -lGLESv2 -o libmain.so
 
-    - name: Assemble APK
+    - name: Package APK
       run: |
         mkdir -p staging/lib/arm64-v8a && cp libmain.so staging/lib/arm64-v8a/
         cat << 'EOF' > AndroidManifest.xml
         <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.gig.flow">
-            <application android:hasCode="false" android:label="Gig Flow 1.1">
+            <application android:hasCode="false" android:label="Gig Flow 1.2">
                 <activity android:name="android.app.NativeActivity" android:exported="true">
                     <meta-data android:name="android.app.lib_name" android:value="main" />
-                    <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+                    <intent-filter>
+                        <action android:name="android.intent.action.MAIN" />
+                        <category android:name="android.intent.category.LAUNCHER" />
+                    </intent-filter>
                 </activity>
             </application>
         </manifest>
         EOF
         $ANDROID_HOME/build-tools/34.0.0/aapt package -f -M AndroidManifest.xml -I $ANDROID_HOME/platforms/android-34/android.jar -F unsorted.apk staging/
         keytool -genkey -v -keystore k.keystore -alias g -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=G" -storepass 123456 -keypass 123456 || true
-        $ANDROID_HOME/build-tools/34.0.0/apksigner sign --ks k.keystore --ks-pass pass:123456 --out GigFlow.apk unsorted.apk
+        $ANDROID_HOME/build-tools/34.0.0/apksigner sign --ks k.keystore --ks-pass pass:123456 --out GigFlow_1.2.apk unsorted.apk
 
     - name: Upload
       uses: actions/upload-artifact@v4
       with:
         name: Gig-Flow-Fixed-APK
-        path: GigFlow.apk
+        path: GigFlow_1.2.apk
