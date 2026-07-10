@@ -1,4 +1,4 @@
-name: Gig-Flow Compiler 1.6 (Working Engine)
+name: Gig-Flow Compiler 1.7 (Architecture Fix)
 
 on: [push, workflow_dispatch]
 
@@ -12,41 +12,50 @@ jobs:
       uses: android-actions/setup-android@v3
     - run: sdkmanager "platforms;android-34" "build-tools;34.0.0"
 
-    - name: Create Working Transpiler
+    - name: Create Proper Transpiler
       run: |
         cat << 'EOF' > compiler.py
         import re
 
         def transpile(code):
+            # Замены API
             code = re.sub(r'input->tapped\((.*?)\)', r'check_input_touch(state, \1)', code)
             code = re.sub(r'render->clear\((.*?),(.*?),(.*?)\)', r'glClearColor(\1, \2, \3, 1.0f); glClear(GL_COLOR_BUFFER_BIT)', code)
             code = code.replace("render->drawRect", "draw_rect_with_color")
             code = code.replace("render->text", "draw_ui_text")
             code = code.replace("color.Green", '"green"')
+            
+            # Типы и объекты
             code = re.sub(r'\bRect\((.*?)\)', r'std::make_shared<Rect>(\1)', code)
             code = re.sub(r'\bvar\b', 'auto', code)
-            code = code.replace("entry game {", '// User game logic starts')
-            code = code.replace("loop {", '// Game loop')
+            
+            # Структура программы
+            code = code.replace("entry game {", '')
+            code = code.replace("loop {", '')
             code = re.sub(r'if\s+(.*?)\s*\{', r'if (\1) {', code)
             code = re.sub(r'(\".*?\")\s*\+\s*(\w+)', r'std::string(\1) + std::to_string(\2)', code)
 
-            # Убираем точки с запятой - их добавим в шаблон
+            # Добавляем точки с запятой
             final_lines = []
             for line in code.split('\n'):
                 s = line.strip()
-                if not s or s.startswith('//'):
+                if not s or s.startswith('//') or s.endswith('{'):
                     final_lines.append(line)
                     continue
-                if not s.endswith(';') and not s.endswith('{') and not s.endswith('}'):
+                if s == '}':
+                    final_lines.append(line)
+                    continue
+                if not s.endswith(';'):
                     line += ';'
                 final_lines.append(line)
+            
             return "\n".join(final_lines)
 
         with open('main.gig', 'r') as f:
-            user_logic = transpile(f.read())
+            user_code = transpile(f.read())
 
-        # Полноценный рабочий движок
-        full_code = """
+        # Создаем полноценный движок
+        engine = f"""
         #include <android_native_app_glue.h>
         #include <GLES2/gl2.h>
         #include <EGL/egl.h>
@@ -56,83 +65,72 @@ jobs:
 
         #define LOGI(...) ((void)__android_log_print(ANDROID_LOG_INFO, "GigFlow", __VA_ARGS__))
 
-        struct Rect { 
+        struct Rect {{ 
             float x, y, w, h; 
-            Rect(float _x, float _y, float _w, float _h) : x(_x), y(_y), w(_w), h(_h) {} 
-        };
+            Rect(float a, float b, float c, float d) : x(a), y(b), w(c), h(d) {{}} 
+        }};
 
-        // Глобальные переменные для игры
-        """ + user_logic + """
+        void draw_rect_with_color(std::shared_ptr<Rect> r, std::string c) {{}}
+        void draw_ui_text(std::string t, float x, float y, float s) {{ LOGI("%s", t.c_str()); }}
+        bool check_input_touch(android_app* s, std::shared_ptr<Rect> r) {{ return false; }}
 
-        void draw_rect_with_color(std::shared_ptr<Rect> r, std::string c) {
-            // Простая отрисовка (в будущем добавим shader)
-        }
-        
-        void draw_ui_text(std::string t, float x, float y, float s) {
-            LOGI("Text: %s", t.c_str());
-        }
-        
-        bool check_input_touch(struct android_app* s, std::shared_ptr<Rect> r) {
-            return false; // TODO: Реальная обработка касаний
-        }
+        // Глобальные переменные игры (объявляем здесь)
+        auto score = 0;
+        auto power = 1;
+        std::shared_ptr<Rect> mainButton;
 
-        extern "C" void android_main(struct android_app* state) {
-            LOGI("Gig-Flow Engine Started");
+        void game_update(android_app* state) {{
+            {user_code}
+        }}
+
+        extern "C" void android_main(struct android_app* state) {{
+            LOGI("Gig-Flow Started");
             
-            // Инициализация EGL
+            // Инициализация игровых объектов
+            mainButton = std::make_shared<Rect>(200, 400, 600, 600);
+            
             EGLDisplay display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
             eglInitialize(display, 0, 0);
             
             EGLConfig config;
             EGLint numConfigs;
-            const EGLint attribs[] = {
+            const EGLint attribs[] = {{
                 EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT,
                 EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
                 EGL_BLUE_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_RED_SIZE, 8,
                 EGL_NONE
-            };
+            }};
             eglChooseConfig(display, attribs, &config, 1, &numConfigs);
             
-            const EGLint contextAttribs[] = { EGL_CONTEXT_CLIENT_VERSION, 2, EGL_NONE };
-            EGLContext context = eglCreateContext(display, config, NULL, contextAttribs);
+            const EGLint ctxAttribs[] = {{ EGL_CONTEXT_CLIENT_VERSION, 2, EGL_NONE }};
+            EGLContext context = eglCreateContext(display, config, NULL, ctxAttribs);
             EGLSurface surface = EGL_NO_SURFACE;
 
-            // Главный цикл
             int events;
             struct android_poll_source* source;
             
-            while (1) {
-                while ((ALooper_pollAll(state->window ? 0 : -1, NULL, &events, (void**)&source)) >= 0) {
-                    if (source != NULL) source->process(state, source);
-                    if (state->destroyRequested != 0) {
-                        LOGI("App destroyed");
-                        return;
-                    }
-                }
+            while (1) {{
+                // Используем ALooper_pollOnce вместо устаревшего pollAll
+                while ((ALooper_pollOnce(state->window ? 0 : -1, NULL, &events, (void**)&source)) >= 0) {{
+                    if (source) source->process(state, source);
+                    if (state->destroyRequested) return;
+                }}
                 
-                // Создаем поверхность когда окно готово
-                if (state->window != NULL && surface == EGL_NO_SURFACE) {
+                if (state->window && surface == EGL_NO_SURFACE) {{
                     surface = eglCreateWindowSurface(display, config, state->window, NULL);
                     eglMakeCurrent(display, surface, surface, context);
-                    LOGI("Surface created");
-                }
+                }}
                 
-                // Рендеринг
-                if (surface != EGL_NO_SURFACE) {
-                    glClearColor(0.1f, 0.1f, 0.2f, 1.0f);
-                    glClear(GL_COLOR_BUFFER_BIT);
-                    
-                    // Здесь выполняется пользовательская логика
-                    // (В будущих версиях добавим вызов функций из main.gig)
-                    
+                if (surface != EGL_NO_SURFACE) {{
+                    game_update(state); // Вызываем пользовательский код
                     eglSwapBuffers(display, surface);
-                }
-            }
-        }
+                }}
+            }}
+        }}
         """
         
         with open("main.cpp", "w") as f:
-            f.write(full_code)
+            f.write(engine)
         EOF
         python3 compiler.py
 
@@ -150,7 +148,7 @@ jobs:
         <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.gig.flow">
             <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="34" />
             <uses-feature android:glEsVersion="0x00020000" android:required="true" />
-            <application android:hasCode="false" android:label="Gig Flow 1.6" android:extractNativeLibs="true">
+            <application android:hasCode="false" android:label="Gig Flow 1.7" android:extractNativeLibs="true">
                 <activity android:name="android.app.NativeActivity"
                           android:configChanges="orientation|keyboardHidden|screenSize"
                           android:exported="true"
@@ -166,10 +164,10 @@ jobs:
         EOF
         $ANDROID_HOME/build-tools/34.0.0/aapt package -f -M AndroidManifest.xml -I $ANDROID_HOME/platforms/android-34/android.jar -F build.apk staging/
         keytool -genkey -v -keystore k.keystore -alias g -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=G" -storepass 123456 -keypass 123456 || true
-        $ANDROID_HOME/build-tools/34.0.0/apksigner sign --ks k.keystore --ks-pass pass:123456 --out GigFlow_Working.apk build.apk
+        $ANDROID_HOME/build-tools/34.0.0/apksigner sign --ks k.keystore --ks-pass pass:123456 --out GigFlow_v17.apk build.apk
 
     - name: Upload
       uses: actions/upload-artifact@v4
       with:
-        name: Gig-Flow-Working
-        path: GigFlow_Working.apk
+        name: Gig-Flow-v17
+        path: GigFlow_v17.apk
