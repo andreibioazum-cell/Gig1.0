@@ -1,4 +1,4 @@
-name: Gig-Flow Compiler 1.7 (Architecture Fix)
+name: Gig-Flow Compiler 1.8 (Brace Fix)
 
 on: [push, workflow_dispatch]
 
@@ -12,12 +12,16 @@ jobs:
       uses: android-actions/setup-android@v3
     - run: sdkmanager "platforms;android-34" "build-tools;34.0.0"
 
-    - name: Create Proper Transpiler
+    - name: Create Smart Transpiler
       run: |
         cat << 'EOF' > compiler.py
         import re
 
         def transpile(code):
+            # Убираем структурные блоки полностью
+            code = code.replace("entry game {", '')
+            code = code.replace("loop {", '')
+            
             # Замены API
             code = re.sub(r'input->tapped\((.*?)\)', r'check_input_touch(state, \1)', code)
             code = re.sub(r'render->clear\((.*?),(.*?),(.*?)\)', r'glClearColor(\1, \2, \3, 1.0f); glClear(GL_COLOR_BUFFER_BIT)', code)
@@ -25,28 +29,41 @@ jobs:
             code = code.replace("render->text", "draw_ui_text")
             code = code.replace("color.Green", '"green"')
             
-            # Типы и объекты
+            # Типы
             code = re.sub(r'\bRect\((.*?)\)', r'std::make_shared<Rect>(\1)', code)
             code = re.sub(r'\bvar\b', 'auto', code)
-            
-            # Структура программы
-            code = code.replace("entry game {", '')
-            code = code.replace("loop {", '')
             code = re.sub(r'if\s+(.*?)\s*\{', r'if (\1) {', code)
             code = re.sub(r'(\".*?\")\s*\+\s*(\w+)', r'std::string(\1) + std::to_string(\2)', code)
 
-            # Добавляем точки с запятой
+            # Обработка строк
+            lines = code.split('\n')
             final_lines = []
-            for line in code.split('\n'):
+            brace_depth = 0  # Счетчик вложенности скобок
+            
+            for line in lines:
                 s = line.strip()
-                if not s or s.startswith('//') or s.endswith('{'):
+                
+                # Пропускаем пустые строки и комментарии
+                if not s or s.startswith('//'):
                     final_lines.append(line)
                     continue
+                
+                # Подсчитываем открывающие скобки
+                brace_depth += s.count('{')
+                
+                # Если это закрывающая скобка от удаленных блоков - пропускаем
                 if s == '}':
+                    brace_depth -= 1
+                    if brace_depth < 0:  # Лишняя скобка от entry/loop
+                        brace_depth = 0
+                        continue
                     final_lines.append(line)
                     continue
-                if not s.endswith(';'):
+                
+                # Добавляем точку с запятой если нужно
+                if not s.endswith(';') and not s.endswith('{') and not s.endswith('}'):
                     line += ';'
+                
                 final_lines.append(line)
             
             return "\n".join(final_lines)
@@ -54,7 +71,6 @@ jobs:
         with open('main.gig', 'r') as f:
             user_code = transpile(f.read())
 
-        # Создаем полноценный движок
         engine = f"""
         #include <android_native_app_glue.h>
         #include <GLES2/gl2.h>
@@ -74,19 +90,16 @@ jobs:
         void draw_ui_text(std::string t, float x, float y, float s) {{ LOGI("%s", t.c_str()); }}
         bool check_input_touch(android_app* s, std::shared_ptr<Rect> r) {{ return false; }}
 
-        // Глобальные переменные игры (объявляем здесь)
         auto score = 0;
         auto power = 1;
         std::shared_ptr<Rect> mainButton;
 
         void game_update(android_app* state) {{
-            {user_code}
+{user_code}
         }}
 
         extern "C" void android_main(struct android_app* state) {{
-            LOGI("Gig-Flow Started");
-            
-            // Инициализация игровых объектов
+            LOGI("Gig-Flow Engine Started");
             mainButton = std::make_shared<Rect>(200, 400, 600, 600);
             
             EGLDisplay display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
@@ -110,7 +123,6 @@ jobs:
             struct android_poll_source* source;
             
             while (1) {{
-                // Используем ALooper_pollOnce вместо устаревшего pollAll
                 while ((ALooper_pollOnce(state->window ? 0 : -1, NULL, &events, (void**)&source)) >= 0) {{
                     if (source) source->process(state, source);
                     if (state->destroyRequested) return;
@@ -122,7 +134,7 @@ jobs:
                 }}
                 
                 if (surface != EGL_NO_SURFACE) {{
-                    game_update(state); // Вызываем пользовательский код
+                    game_update(state);
                     eglSwapBuffers(display, surface);
                 }}
             }}
@@ -148,7 +160,7 @@ jobs:
         <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.gig.flow">
             <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="34" />
             <uses-feature android:glEsVersion="0x00020000" android:required="true" />
-            <application android:hasCode="false" android:label="Gig Flow 1.7" android:extractNativeLibs="true">
+            <application android:hasCode="false" android:label="Gig Flow 1.8" android:extractNativeLibs="true">
                 <activity android:name="android.app.NativeActivity"
                           android:configChanges="orientation|keyboardHidden|screenSize"
                           android:exported="true"
@@ -164,10 +176,10 @@ jobs:
         EOF
         $ANDROID_HOME/build-tools/34.0.0/aapt package -f -M AndroidManifest.xml -I $ANDROID_HOME/platforms/android-34/android.jar -F build.apk staging/
         keytool -genkey -v -keystore k.keystore -alias g -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=G" -storepass 123456 -keypass 123456 || true
-        $ANDROID_HOME/build-tools/34.0.0/apksigner sign --ks k.keystore --ks-pass pass:123456 --out GigFlow_v17.apk build.apk
+        $ANDROID_HOME/build-tools/34.0.0/apksigner sign --ks k.keystore --ks-pass pass:123456 --out GigFlow_v18.apk build.apk
 
     - name: Upload
       uses: actions/upload-artifact@v4
       with:
-        name: Gig-Flow-v17
-        path: GigFlow_v17.apk
+        name: Gig-Flow-v18
+        path: GigFlow_v18.apk
