@@ -1,4 +1,4 @@
-name: Gig-Flow Compiler 3.0 (All in One)
+name: Gig-Flow Compiler 3.0 (Full)
 
 on:
   push:
@@ -24,7 +24,7 @@ jobs:
         choco install mingw -y
         echo "C:\ProgramData\chocolatey\lib\mingw\tools\install\mingw64\bin" >> $env:GITHUB_PATH
 
-    - name: Transpile and Compile
+    - name: Transpile Gig to C++
       shell: bash
       run: |
         python3 << 'EOF'
@@ -47,8 +47,13 @@ jobs:
             code = re.sub(r'graphics\.clear\s*\(([^,]+)\s*,\s*([^,]+)\s*,\s*([^)]+)\)', r'glClearColor(\1, \2, \3, 1.0f); glClear(GL_COLOR_BUFFER_BIT)', code)
             code = re.sub(r'graphics\.draw_sprite\s*\(([^,]+)\s*,\s*([^,]+)\s*,\s*([^)]+)\)', r'draw_sprite(\1, \2, \3)', code)
             code = re.sub(r'graphics\.draw_text\s*\(([^,]+)\s*,\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^)]+)\)', r'draw_text(\1, \2, \3, \4)', code)
+            code = re.sub(r'graphics\.draw_circle\s*\(([^,]+)\s*,\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^)]+)\)', r'draw_circle(\1, \2, \3, \4)', code)
+            code = re.sub(r'graphics\.draw_rect\s*\(([^,]+)\s*,\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^)]+)\)', r'draw_rect(\1, \2, \3, \4, \5)', code)
             code = re.sub(r'input:is_down\s*\(([^)]+)\)', r'is_key_down(\1)', code)
             code = re.sub(r'input:is_tapped\s*\(\)', r'is_tapped()', code)
+            code = re.sub(r'math\.random\s*\(([^)]*)\)', r'rand() % \1', code)
+            code = re.sub(r'math\.floor\s*\(([^)]+)\)', r'(int)(\1)', code)
+            code = re.sub(r'math\.sqrt\s*\(([^)]+)\)', r'sqrt(\1)', code)
             
             lines = []
             for line in code.split('\n'):
@@ -62,7 +67,8 @@ jobs:
                     lines.append(line)
             return '\n'.join(lines)
 
-        with open('main.gig', 'r') as f:
+        # Читаем файл в UTF-8
+        with open('main.gig', 'r', encoding='utf-8') as f:
             code = f.read()
 
         cpp = transpile(code)
@@ -74,8 +80,8 @@ jobs:
         #include <stdio.h>
         #include <string>
         #include <cmath>
-        #include <vector>
-        #include <map>
+        #include <cstdlib>
+        #include <ctime>
 
         #define LOGI(...) printf(__VA_ARGS__)
 
@@ -83,11 +89,19 @@ jobs:
         float screen_height = 600;
 
         void draw_sprite(const char* name, float x, float y) {
-            printf("draw_sprite: %s at %f, %f\\n", name, x, y);
+            LOGI("draw_sprite: %s at %f, %f\\n", name, x, y);
         }
 
         void draw_text(const char* text, float x, float y, float size) {
-            printf("draw_text: %s at %f, %f (size: %f)\\n", text, x, y, size);
+            LOGI("draw_text: %s at %f, %f (size: %f)\\n", text, x, y, size);
+        }
+
+        void draw_circle(float x, float y, float radius, const char* color) {
+            LOGI("draw_circle: at %f, %f radius %f color %s\\n", x, y, radius, color);
+        }
+
+        void draw_rect(float x, float y, float w, float h, const char* color) {
+            LOGI("draw_rect: at %f, %f %fx%f color %s\\n", x, y, w, h, color);
         }
 
         bool is_key_down(const char* key) {
@@ -100,18 +114,43 @@ jobs:
 
         ''' + cpp + '''
 
-        int main(int argc, char** argv) {
-            printf("Gig-Flow Game!\\n");
-            game_load();
-            while (1) {
-                game_update(0.016);
-                game_draw();
+        void display() {
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+            game_draw();
+            glutSwapBuffers();
+        }
+
+        void idle() {
+            game_update(0.016);
+            glutPostRedisplay();
+        }
+
+        void mouse(int button, int state, int x, int y) {
+            if (button == GLUT_LEFT_BUTTON && state == GLUT_DOWN) {
+                love_touchpressed(x, y);
             }
+        }
+
+        int main(int argc, char** argv) {
+            srand(time(NULL));
+            glutInit(&argc, argv);
+            glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGB | GLUT_DEPTH);
+            glutInitWindowSize(800, 600);
+            glutCreateWindow("Gig-Flow Game");
+            
+            glClearColor(0.1f, 0.15f, 0.25f, 1.0f);
+            
+            glutDisplayFunc(display);
+            glutIdleFunc(idle);
+            glutMouseFunc(mouse);
+            
+            game_load();
+            glutMainLoop();
             return 0;
         }
         '''
 
-        with open('main.cpp', 'w') as f:
+        with open('main.cpp', 'w', encoding='utf-8') as f:
             f.write(main_cpp)
 
         EOF
@@ -138,14 +177,16 @@ jobs:
       uses: android-actions/setup-android@v3
 
     - name: Install SDK Components
-      run: sdkmanager "platforms;android-34" "build-tools;34.0.0" "ndk;25.2.9519653"
+      run: |
+        yes | sdkmanager --licenses
+        sdkmanager "platforms;android-34" "build-tools;34.0.0" "ndk;26.3.11579264"
 
     - name: Set Android environment
       run: |
         echo "ANDROID_HOME=/usr/local/lib/android/sdk" >> $GITHUB_ENV
-        echo "ANDROID_NDK_HOME=/usr/local/lib/android/sdk/ndk/25.2.9519653" >> $GITHUB_ENV
+        echo "ANDROID_NDK_HOME=/usr/local/lib/android/sdk/ndk/26.3.11579264" >> $GITHUB_ENV
 
-    - name: Transpile and Compile
+    - name: Transpile Gig to C++
       shell: bash
       run: |
         python3 << 'EOF'
@@ -163,13 +204,18 @@ jobs:
             code = re.sub(r'elseif\s+([^\s]+)\s+then', r'} else if (\1) {', code)
             code = re.sub(r'else', r'} else {', code)
             code = re.sub(r'end', r'}', code)
-            code = re.sub(r'print\s*\(([^)]+)\)', r'LOGI(\1)', code)
+            code = re.sub(r'print\s*\(([^)]+)\)', r'__android_log_print(ANDROID_LOG_INFO, "Gig", \1)', code)
             code = re.sub(r'return\s+([^;\n]+)', r'return \1;', code)
             code = re.sub(r'graphics\.clear\s*\(([^,]+)\s*,\s*([^,]+)\s*,\s*([^)]+)\)', r'glClearColor(\1, \2, \3, 1.0f); glClear(GL_COLOR_BUFFER_BIT)', code)
             code = re.sub(r'graphics\.draw_sprite\s*\(([^,]+)\s*,\s*([^,]+)\s*,\s*([^)]+)\)', r'draw_sprite(\1, \2, \3)', code)
             code = re.sub(r'graphics\.draw_text\s*\(([^,]+)\s*,\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^)]+)\)', r'draw_text(\1, \2, \3, \4)', code)
+            code = re.sub(r'graphics\.draw_circle\s*\(([^,]+)\s*,\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^)]+)\)', r'draw_circle(\1, \2, \3, \4)', code)
+            code = re.sub(r'graphics\.draw_rect\s*\(([^,]+)\s*,\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^)]+)\)', r'draw_rect(\1, \2, \3, \4, \5)', code)
             code = re.sub(r'input:is_down\s*\(([^)]+)\)', r'is_key_down(\1)', code)
             code = re.sub(r'input:is_tapped\s*\(\)', r'is_tapped()', code)
+            code = re.sub(r'math\.random\s*\(([^)]*)\)', r'rand() % \1', code)
+            code = re.sub(r'math\.floor\s*\(([^)]+)\)', r'(int)(\1)', code)
+            code = re.sub(r'math\.sqrt\s*\(([^)]+)\)', r'sqrt(\1)', code)
             
             lines = []
             for line in code.split('\n'):
@@ -183,7 +229,8 @@ jobs:
                     lines.append(line)
             return '\n'.join(lines)
 
-        with open('main.gig', 'r') as f:
+        # Читаем файл в UTF-8
+        with open('main.gig', 'r', encoding='utf-8') as f:
             user_code = transpile(f.read())
 
         cpp = '''
@@ -193,6 +240,8 @@ jobs:
         #include <android/log.h>
         #include <string>
         #include <cmath>
+        #include <cstdlib>
+        #include <ctime>
 
         #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "Gig", __VA_ARGS__)
 
@@ -202,6 +251,14 @@ jobs:
 
         void draw_text(const char* text, float x, float y, float size) {
             LOGI("draw_text: %s at %f, %f (size: %f)", text, x, y, size);
+        }
+
+        void draw_circle(float x, float y, float radius, const char* color) {
+            LOGI("draw_circle: at %f, %f radius %f color %s", x, y, radius, color);
+        }
+
+        void draw_rect(float x, float y, float w, float h, const char* color) {
+            LOGI("draw_rect: at %f, %f %fx%f color %s", x, y, w, h, color);
         }
 
         bool is_key_down(const char* key) {
@@ -215,6 +272,7 @@ jobs:
         ''' + user_code + '''
 
         void android_main(struct android_app* state) {
+            srand(time(NULL));
             EGLDisplay display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
             eglInitialize(display, NULL, NULL);
 
@@ -248,15 +306,22 @@ jobs:
         }
         '''
 
-        with open('main.cpp', 'w') as f:
+        with open('main.cpp', 'w', encoding='utf-8') as f:
             f.write(cpp)
 
         EOF
 
     - name: Compile SO
       run: |
-        TC=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin
-        GLUE=$ANDROID_NDK_HOME/sources/android/native_app_glue
+        NDK=$ANDROID_NDK_HOME
+        TC=$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin
+        GLUE=$NDK/sources/android/native_app_glue
+        
+        if [ ! -d "$NDK" ]; then
+          echo "NDK not found at $NDK"
+          exit 1
+        fi
+        
         $TC/aarch64-linux-android34-clang -c $GLUE/android_native_app_glue.c -o glue.o -I$GLUE -fPIC
         $TC/aarch64-linux-android34-clang++ main.cpp glue.o -I$GLUE -shared -fPIC -O3 -landroid -lGLESv2 -lEGL -o libmain.so
 
