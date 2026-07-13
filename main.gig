@@ -1,19 +1,38 @@
--- main.gig
-
 local clicks = 0
 local power = 1
+local score = 0
+
+local enemies = {}
+local enemy_count = 0
 
 function game_load()
     print("Game loaded!")
+    for i = 1, 5 do
+        table.insert(enemies, i * 10)
+    end
 end
 
 function game_update(dt)
     clicks = clicks + power * dt
+    score = math.floor(clicks)
+    enemy_count = #enemies
 end
 
 function game_draw()
     graphics.clear(0.1, 0.2, 0.3)
-    graphics.draw_text("Clicks: " .. clicks, 10, 10, 20)
+    graphics.draw_text("Clicks", 10, 10, 20)
     graphics.draw_circle(400, 300, 50, "green")
     graphics.draw_rect(10, 50, 100, 30, "blue")
+    print("Score: " .. score)
+end
+
+function love_touchpressed(x, y)
+    clicks = clicks + 1
+    print("Click!")
+end
+
+function love_mousepressed(x, y, button)
+    if button == 1 then
+        love_touchpressed(x, y)
+    end
 end
