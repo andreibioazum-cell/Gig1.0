@@ -10,6 +10,7 @@ function game_load()
     for i = 1, 5 do
         table.insert(enemies, i * 10)
     end
+    enemy_count = #enemies
 end
 
 function game_update(dt)
