@@ -1,155 +1,107 @@
--- main.gig – Кликер игра (всё в одном файле)
+-- main.gig – Clicker Game
 
--- ============================================================
---  ПЕРЕМЕННЫЕ
--- ============================================================
 local clicks = 0
-local click_power = 1
-local auto_clickers = 0
-local auto_power = 0
+local power = 1
+local auto = 0
+local shop_open = false
 
-local upgrade_cost = 10
-local auto_cost = 50
+local cost_upgrade = 10
+local cost_auto = 50
 
-local show_shop = false
-
-local screen_w = 800
-local screen_h = 600
-
--- ============================================================
---  ЗАГРУЗКА
--- ============================================================
-function love.load()
-    print("🖱️ Clicker Game loaded!")
+function game_load()
+    print("Clicker loaded!")
 end
 
--- ============================================================
---  ОБНОВЛЕНИЕ
--- ============================================================
-function love.update(dt)
-    if auto_clickers > 0 then
-        clicks = clicks + auto_power * dt
+function game_update(dt)
+    if auto > 0 then
+        clicks = clicks + auto * dt
     end
     
-    upgrade_cost = 10 + math.floor(clicks * 0.05)
-    auto_cost = 50 + auto_clickers * 15
+    cost_upgrade = 10 + math.floor(clicks * 0.05)
+    cost_auto = 50 + auto * 15
 end
 
--- ============================================================
---  ОТРИСОВКА
--- ============================================================
-function love.draw()
+function game_draw()
     graphics.clear(0.08, 0.12, 0.2)
     
-    -- Заголовок
-    graphics.draw_text("🖱️ CLICKER", 330, 20, 36)
+    graphics.draw_text("CLICKER", 330, 20, 36)
+    graphics.draw_text("Clicks: " .. math.floor(clicks), 330, 60, 28)
     
-    -- Счёт
-    graphics.draw_text("💰 " .. math.floor(clicks), 340, 65, 32)
-    
-    -- Клики в секунду
-    if auto_power > 0 then
-        graphics.draw_text("⚡ " .. auto_power .. " CPS", 350, 105, 18)
+    if auto > 0 then
+        graphics.draw_text("Auto: " .. auto .. " CPS", 340, 95, 18)
     end
     
-    -- Кнопка клика
-    local cx, cy = 400, 300
-    graphics.draw_circle(cx, cy, 90, "green")
-    graphics.draw_text("CLICK", 365, 290, 28)
-    graphics.draw_text("+" .. click_power, 385, 325, 16)
+    graphics.draw_circle(400, 280, 80, "green")
+    graphics.draw_text("CLICK", 360, 270, 26)
+    graphics.draw_text("+" .. power, 385, 300, 16)
     
-    -- Кнопка магазина
     graphics.draw_rect(700, 15, 85, 45, "blue")
-    graphics.draw_text("SHOP", 718, 28, 20)
+    graphics.draw_text("SHOP", 720, 28, 20)
     
-    -- Кнопка магазина (открыт)
-    if show_shop then
+    if shop_open then
         graphics.draw_rect(180, 150, 440, 320, "darkblue")
-        graphics.draw_text("🏪 SHOP", 360, 165, 28)
+        graphics.draw_text("SHOP", 360, 165, 28)
         
-        -- Улучшение клика
         graphics.draw_rect(210, 205, 380, 45, "orange")
-        graphics.draw_text("💪 +1 click   cost: " .. math.floor(upgrade_cost), 240, 218, 18)
+        graphics.draw_text("+1 click   cost: " .. math.floor(cost_upgrade), 240, 218, 18)
         
-        -- Автокликер
         graphics.draw_rect(210, 260, 380, 45, "purple")
-        graphics.draw_text("🤖 Auto-clicker   cost: " .. math.floor(auto_cost), 240, 273, 18)
+        graphics.draw_text("Auto-clicker   cost: " .. math.floor(cost_auto), 240, 273, 18)
         
-        -- Статистика
         graphics.draw_rect(210, 315, 380, 45, "gray")
-        graphics.draw_text("📊 Power: " .. click_power .. " | Auto: " .. auto_clickers, 280, 328, 18)
+        graphics.draw_text("Power: " .. power .. "  Auto: " .. auto, 280, 328, 18)
         
-        -- Закрыть
         graphics.draw_rect(210, 370, 380, 45, "red")
-        graphics.draw_text("❌ Close", 360, 383, 20)
+        graphics.draw_text("Close", 360, 383, 20)
     end
     
-    -- Статистика внизу
     graphics.draw_text("Clicks: " .. math.floor(clicks), 20, 570, 14)
-    graphics.draw_text("Power: " .. click_power, 150, 570, 14)
-    graphics.draw_text("Auto: " .. auto_clickers, 280, 570, 14)
-    graphics.draw_text("CPS: " .. auto_power, 410, 570, 14)
+    graphics.draw_text("Power: " .. power, 150, 570, 14)
+    graphics.draw_text("Auto: " .. auto, 280, 570, 14)
 end
 
--- ============================================================
---  ОБРАБОТКА КАСАНИЙ
--- ============================================================
-function love.touchpressed(x, y)
-    -- Кнопка клика
-    local cx, cy = 400, 300
+function love_touchpressed(x, y)
+    local cx, cy = 400, 280
     local dist = math.sqrt((x - cx)^2 + (y - cy)^2)
-    if dist < 90 then
-        clicks = clicks + click_power
-        print("Click! +" .. click_power)
+    if dist < 80 then
+        clicks = clicks + power
+        print("Click! +" .. power)
         return
     end
     
-    -- Кнопка магазина
     if x >= 700 and x <= 785 and y >= 15 and y <= 60 then
-        show_shop = not show_shop
+        shop_open = not shop_open
         return
     end
     
-    -- Магазин
-    if show_shop then
-        -- Улучшение клика
+    if shop_open then
         if x >= 210 and x <= 590 and y >= 205 and y <= 250 then
-            if clicks >= upgrade_cost then
-                clicks = clicks - upgrade_cost
-                click_power = click_power + 1
-                print("Upgraded! Power: " .. click_power)
-            else
-                print("Not enough clicks!")
+            if clicks >= cost_upgrade then
+                clicks = clicks - cost_upgrade
+                power = power + 1
+                print("Upgraded! Power: " .. power)
             end
             return
         end
         
-        -- Автокликер
         if x >= 210 and x <= 590 and y >= 260 and y <= 305 then
-            if clicks >= auto_cost then
-                clicks = clicks - auto_cost
-                auto_clickers = auto_clickers + 1
-                auto_power = auto_power + 1
-                print("Auto-clicker bought! Total: " .. auto_clickers)
-            else
-                print("Not enough clicks!")
+            if clicks >= cost_auto then
+                clicks = clicks - cost_auto
+                auto = auto + 1
+                print("Auto-clicker bought! Total: " .. auto)
             end
             return
         end
         
-        -- Закрыть
         if x >= 210 and x <= 590 and y >= 370 and y <= 415 then
-            show_shop = false
+            shop_open = false
             return
         end
     end
 end
 
--- ============================================================
---  ДЛЯ ПК (МЫШЬ)
--- ============================================================
-function love.mousepressed(x, y, button)
+function love_mousepressed(x, y, button)
     if button == 1 then
-        love.touchpressed(x, y)
+        love_touchpressed(x, y)
     end
 end
