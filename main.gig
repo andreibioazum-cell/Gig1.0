@@ -1,652 +1,155 @@
-// ============================================
-// CUBIC BATTLE - Оригинальная игра на Gig
-// ============================================
+-- main.gig – Кликер игра (всё в одном файле)
 
-entry game {
-    // ============================================
-    // ПЕРЕМЕННЫЕ
-    // ============================================
-    var gameState = "lobby"
-    var playerX = 400
-    var playerY = 600
-    var playerSize = 30
-    var hp = 100
-    var maxHp = 100
-    var score = 0
-    var wave = 1
-    var gameOver = false
-    var gameTime = 0
-    
-    var bullets = []
-    var enemyBullets = []
-    var enemies = []
-    var enemySpawnTimer = 3
-    
-    var aimX = 0
-    var aimY = -1
-    var shootCooldown = 0
-    
-    var abilityCooldown = 0
-    var abilityReady = true
-    
-    var musicOn = true
-    var sfxOn = true
-    var difficulty = "normal"
-    var nickname = "Player"
-    
-    var roomCode = ""
-    var isOnline = false
-    
-    // Текстуры
-    var texPlayer = loadTexture("player.png")
-    var texEnemy = loadTexture("enemy.png")
-    var texBullet = loadTexture("bullet.png")
-    var texBackground = loadTexture("background.png")
-    
-    // Кнопки
-    var btnShoot = Rect(700, 500, 80, 80)
-    var btnBack = Rect(20, 20, 140, 55)
-    var btnAbility = Rect(580, 500, 60, 60)
-    
-    // ============================================
-    // ИНИЦИАЛИЗАЦИЯ
-    // ============================================
-    render->clear(0.02, 0.05, 0.2)
-    render->text("Cubic Battle", 250, 200, 2.0)
-    render->text("Loading...", 330, 300, 1.0)
-    
-    spawnWave()
-    loadSaveData()
-    
-    // ============================================
-    // ГЛАВНЫЙ ЦИКЛ
-    // ============================================
-    loop {
-        if gameState == "lobby" {
-            drawLobby()
-        } else if gameState == "game" {
-            updateGame()
-            drawGame()
-        } else if gameState == "credits" {
-            drawCredits()
-        } else if gameState == "settings" {
-            updateSettings()
-            drawSettings()
-        } else if gameState == "mode_select" {
-            drawModeSelect()
-        } else if gameState == "difficulty" {
-            drawDifficulty()
-        } else if gameState == "room" {
-            updateRoom()
-            drawRoom()
-        }
-    }
-}
+-- ============================================================
+--  ПЕРЕМЕННЫЕ
+-- ============================================================
+local clicks = 0
+local click_power = 1
+local auto_clickers = 0
+local auto_power = 0
 
-// ============================================
-// ЗАГРУЗКА ТЕКСТУР
-// ============================================
-func loadTexture(path) {
-    return render->loadTexture(path)
-}
+local upgrade_cost = 10
+local auto_cost = 50
 
-// ============================================
-// LOBBY
-// ============================================
-func drawLobby() {
-    render->clear(0.02, 0.05, 0.2)
-    
-    if texBackground {
-        render->drawTexture(texBackground, 0, 0, 800, 1200)
-    }
-    
-    render->text("Cubic Battle", 250, 200, 2.5)
-    render->text("Touch & Dodge", 300, 270, 0.8)
-    
-    drawButton(Rect(290, 350, 220, 75), "PLAY", "blue")
-    if input->tapped(Rect(290, 350, 220, 75)) {
-        gameState = "mode_select"
-        playButtonSound()
-    }
-    
-    drawButton(Rect(290, 440, 220, 75), "SETTINGS", "blue")
-    if input->tapped(Rect(290, 440, 220, 75)) {
-        gameState = "settings"
-        playButtonSound()
-    }
-    
-    drawButton(Rect(290, 530, 220, 75), "CREDITS", "blue")
-    if input->tapped(Rect(290, 530, 220, 75)) {
-        gameState = "credits"
-        playButtonSound()
-    }
-}
+local show_shop = false
 
-// ============================================
-// GAME
-// ============================================
-func updateGame() {
-    if gameOver {
-        if input->tapped(Rect(300, 550, 200, 80)) {
-            restartGame()
-        }
+local screen_w = 800
+local screen_h = 600
+
+-- ============================================================
+--  ЗАГРУЗКА
+-- ============================================================
+function love.load()
+    print("🖱️ Clicker Game loaded!")
+end
+
+-- ============================================================
+--  ОБНОВЛЕНИЕ
+-- ============================================================
+function love.update(dt)
+    if auto_clickers > 0 then
+        clicks = clicks + auto_power * dt
+    end
+    
+    upgrade_cost = 10 + math.floor(clicks * 0.05)
+    auto_cost = 50 + auto_clickers * 15
+end
+
+-- ============================================================
+--  ОТРИСОВКА
+-- ============================================================
+function love.draw()
+    graphics.clear(0.08, 0.12, 0.2)
+    
+    -- Заголовок
+    graphics.draw_text("🖱️ CLICKER", 330, 20, 36)
+    
+    -- Счёт
+    graphics.draw_text("💰 " .. math.floor(clicks), 340, 65, 32)
+    
+    -- Клики в секунду
+    if auto_power > 0 then
+        graphics.draw_text("⚡ " .. auto_power .. " CPS", 350, 105, 18)
+    end
+    
+    -- Кнопка клика
+    local cx, cy = 400, 300
+    graphics.draw_circle(cx, cy, 90, "green")
+    graphics.draw_text("CLICK", 365, 290, 28)
+    graphics.draw_text("+" .. click_power, 385, 325, 16)
+    
+    -- Кнопка магазина
+    graphics.draw_rect(700, 15, 85, 45, "blue")
+    graphics.draw_text("SHOP", 718, 28, 20)
+    
+    -- Кнопка магазина (открыт)
+    if show_shop then
+        graphics.draw_rect(180, 150, 440, 320, "darkblue")
+        graphics.draw_text("🏪 SHOP", 360, 165, 28)
+        
+        -- Улучшение клика
+        graphics.draw_rect(210, 205, 380, 45, "orange")
+        graphics.draw_text("💪 +1 click   cost: " .. math.floor(upgrade_cost), 240, 218, 18)
+        
+        -- Автокликер
+        graphics.draw_rect(210, 260, 380, 45, "purple")
+        graphics.draw_text("🤖 Auto-clicker   cost: " .. math.floor(auto_cost), 240, 273, 18)
+        
+        -- Статистика
+        graphics.draw_rect(210, 315, 380, 45, "gray")
+        graphics.draw_text("📊 Power: " .. click_power .. " | Auto: " .. auto_clickers, 280, 328, 18)
+        
+        -- Закрыть
+        graphics.draw_rect(210, 370, 380, 45, "red")
+        graphics.draw_text("❌ Close", 360, 383, 20)
+    end
+    
+    -- Статистика внизу
+    graphics.draw_text("Clicks: " .. math.floor(clicks), 20, 570, 14)
+    graphics.draw_text("Power: " .. click_power, 150, 570, 14)
+    graphics.draw_text("Auto: " .. auto_clickers, 280, 570, 14)
+    graphics.draw_text("CPS: " .. auto_power, 410, 570, 14)
+end
+
+-- ============================================================
+--  ОБРАБОТКА КАСАНИЙ
+-- ============================================================
+function love.touchpressed(x, y)
+    -- Кнопка клика
+    local cx, cy = 400, 300
+    local dist = math.sqrt((x - cx)^2 + (y - cy)^2)
+    if dist < 90 then
+        clicks = clicks + click_power
+        print("Click! +" .. click_power)
         return
-    }
+    end
     
-    gameTime = gameTime + 0.016
+    -- Кнопка магазина
+    if x >= 700 and x <= 785 and y >= 15 and y <= 60 then
+        show_shop = not show_shop
+        return
+    end
     
-    // Движение
-    var dx = 0
-    var dy = 0
-    if input->tapped(Rect(50, 550, 60, 60)) { dy = -1 }
-    if input->tapped(Rect(50, 650, 60, 60)) { dy = 1 }
-    if input->tapped(Rect(0, 600, 50, 50)) { dx = -1 }
-    if input->tapped(Rect(110, 600, 50, 50)) { dx = 1 }
-    
-    if dx != 0 || dy != 0 {
-        var len = sqrt(dx * dx + dy * dy)
-        dx = dx / len
-        dy = dy / len
-        aimX = dx
-        aimY = dy
-    }
-    
-    playerX = playerX + dx * 300 * 0.016
-    playerY = playerY + dy * 300 * 0.016
-    
-    if playerX < playerSize { playerX = playerSize }
-    if playerX > 800 - playerSize { playerX = 800 - playerSize }
-    if playerY < playerSize { playerY = playerSize }
-    if playerY > 1200 - playerSize { playerY = 1200 - playerSize }
-    
-    // Стрельба
-    if shootCooldown > 0 { shootCooldown = shootCooldown - 0.016 }
-    if shootCooldown <= 0 && input->tapped(btnShoot) {
-        shootBullet()
-        shootCooldown = 0.15
-    }
-    
-    // Способность
-    if abilityCooldown > 0 {
-        abilityCooldown = abilityCooldown - 0.016
-        if abilityCooldown <= 0 { abilityReady = true }
-    }
-    if abilityReady && input->tapped(btnAbility) {
-        useAbility()
-        abilityReady = false
-        abilityCooldown = 5
-    }
-    
-    updateBullets()
-    updateEnemies()
-    
-    enemySpawnTimer = enemySpawnTimer - 0.016
-    if enemySpawnTimer <= 0 {
-        spawnWave()
-        wave = wave + 1
-        enemySpawnTimer = 5 - wave * 0.2
-        if enemySpawnTimer < 1.5 { enemySpawnTimer = 1.5 }
-    }
-    
-    if hp <= 0 {
-        hp = 0
-        gameOver = true
-    }
-    
-    if input->tapped(btnBack) {
-        gameState = "lobby"
-        playButtonSound()
-    }
-}
-
-func drawGame() {
-    render->clear(0.02, 0.05, 0.2)
-    
-    if texBackground {
-        render->drawTexture(texBackground, 0, 0, 800, 1200)
-    }
-    
-    // Враги
-    for i = 0; i < len(enemies); i = i + 1 {
-        var e = enemies[i]
-        if texEnemy {
-            render->drawTexture(texEnemy, e.x - e.size/2, e.y - e.size/2, e.size, e.size)
-        } else {
-            render->drawRect(Rect(e.x - e.size/2, e.y - e.size/2, e.size, e.size), "red")
-        }
-        var hpPercent = e.hp / e.maxHp
-        render->drawRect(Rect(e.x - 20, e.y - e.size/2 - 10, 40 * hpPercent, 4), "green")
-    }
-    
-    // Пули
-    for i = 0; i < len(bullets); i = i + 1 {
-        var b = bullets[i]
-        if texBullet {
-            render->drawTexture(texBullet, b.x - 8, b.y - 8, 16, 16)
-        } else {
-            render->drawRect(Rect(b.x - 4, b.y - 4, 8, 8), "cyan")
-        }
-    }
-    for i = 0; i < len(enemyBullets); i = i + 1 {
-        var b = enemyBullets[i]
-        render->drawRect(Rect(b.x - 5, b.y - 5, 10, 10), "red")
-    }
-    
-    // Игрок
-    if texPlayer {
-        render->drawTexture(texPlayer, playerX - playerSize/2, playerY - playerSize/2, playerSize, playerSize)
-    } else {
-        render->drawRect(Rect(playerX - playerSize/2, playerY - playerSize/2, playerSize, playerSize), "blue")
-    }
-    
-    // Глаза
-    var eyeX = playerX + aimX * 10
-    var eyeY = playerY + aimY * 10
-    render->drawRect(Rect(eyeX - 4, eyeY - 4, 8, 8), "white")
-    render->drawRect(Rect(eyeX + aimX * 3 - 2, eyeY + aimY * 3 - 2, 4, 4), "black")
-    
-    // UI
-    var hpPercent = hp / maxHp
-    render->drawRect(Rect(20, 20, 200, 20), "gray")
-    if hpPercent > 0.5 {
-        render->drawRect(Rect(22, 22, 196 * hpPercent, 16), "green")
-    } else if hpPercent > 0.25 {
-        render->drawRect(Rect(22, 22, 196 * hpPercent, 16), "yellow")
-    } else {
-        render->drawRect(Rect(22, 22, 196 * hpPercent, 16), "red")
-    }
-    render->text("HP: " + hp, 70, 20, 0.6)
-    render->text("Score: " + score, 20, 50, 0.6)
-    render->text("Wave: " + wave, 20, 80, 0.6)
-    
-    drawButton(btnShoot, "FIRE", "blue")
-    
-    if abilityReady {
-        drawButton(btnAbility, "C", "purple")
-    } else {
-        drawButton(btnAbility, "C", "gray")
-    }
-    
-    drawButton(btnBack, "Back", "blue")
-    
-    if gameOver {
-        render->clear(0, 0, 0, 0.7)
-        render->text("GAME OVER", 250, 300, 3.0)
-        render->text("Score: " + score, 320, 400, 1.5)
-        render->text("Wave: " + wave, 330, 450, 1.5)
-        drawButton(Rect(300, 550, 200, 80), "Restart", "blue")
-    }
-}
-
-// ============================================
-// ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
-// ============================================
-func shootBullet() {
-    if gameOver { return }
-    if len(bullets) >= 30 { return }
-    
-    var dx = aimX
-    var dy = aimY
-    if dx == 0 && dy == 0 { dx = 0; dy = -1 }
-    
-    var bullet = {
-        x: playerX,
-        y: playerY - playerSize/2,
-        vx: dx * 500,
-        vy: dy * 500,
-        life: 1.5,
-        damage: 2
-    }
-    bullets.push(bullet)
-}
-
-func useAbility() {
-    for i = 0; i < len(enemies); i = i + 1 {
-        var e = enemies[i]
-        var dx = e.x - playerX
-        var dy = e.y - playerY
-        var dist = sqrt(dx * dx + dy * dy)
+    -- Магазин
+    if show_shop then
+        -- Улучшение клика
+        if x >= 210 and x <= 590 and y >= 205 and y <= 250 then
+            if clicks >= upgrade_cost then
+                clicks = clicks - upgrade_cost
+                click_power = click_power + 1
+                print("Upgraded! Power: " .. click_power)
+            else
+                print("Not enough clicks!")
+            end
+            return
+        end
         
-        if dist < 400 {
-            var nx = dx / dist
-            var ny = dy / dist
-            if nx * aimX + ny * aimY > 0.5 {
-                e.hp = e.hp - 15
-                if e.hp <= 0 {
-                    score = score + 10
-                    enemies.remove(i)
-                    i = i - 1
-                }
-            }
-        }
-    }
-}
-
-func spawnWave() {
-    var count = 3 + wave
-    if count > 10 { count = 10 }
-    
-    for i = 0; i < count; i = i + 1 {
-        var side = random(0, 3)
-        var x = 0
-        var y = 0
+        -- Автокликер
+        if x >= 210 and x <= 590 and y >= 260 and y <= 305 then
+            if clicks >= auto_cost then
+                clicks = clicks - auto_cost
+                auto_clickers = auto_clickers + 1
+                auto_power = auto_power + 1
+                print("Auto-clicker bought! Total: " .. auto_clickers)
+            else
+                print("Not enough clicks!")
+            end
+            return
+        end
         
-        if side == 0 {
-            x = random(-50, -20)
-            y = random(0, 1200)
-        } else if side == 1 {
-            x = random(820, 850)
-            y = random(0, 1200)
-        } else if side == 2 {
-            x = random(0, 800)
-            y = random(-50, -20)
-        } else {
-            x = random(0, 800)
-            y = random(1220, 1250)
-        }
-        
-        var enemy = {
-            x: x,
-            y: y,
-            size: 30 + wave,
-            hp: 5 + wave * 2,
-            maxHp: 5 + wave * 2,
-            speed: 150 + wave * 10,
-            shootTimer: random(1, 3)
-        }
-        enemies.push(enemy)
-    }
-}
+        -- Закрыть
+        if x >= 210 and x <= 590 and y >= 370 and y <= 415 then
+            show_shop = false
+            return
+        end
+    end
+end
 
-func updateEnemies() {
-    for i = 0; i < len(enemies); i = i + 1 {
-        var e = enemies[i]
-        var dx = playerX - e.x
-        var dy = playerY - e.y
-        var dist = sqrt(dx * dx + dy * dy)
-        
-        if dist > 0 {
-            var nx = dx / dist
-            var ny = dy / dist
-            
-            if dist < 100 {
-                e.x = e.x - nx * e.speed * 0.016
-                e.y = e.y - ny * e.speed * 0.016
-            } else if dist < 350 {
-                e.x = e.x + nx * e.speed * 0.6 * 0.016
-                e.y = e.y + ny * e.speed * 0.6 * 0.016
-            } else {
-                e.x = e.x + nx * e.speed * 0.016
-                e.y = e.y + ny * e.speed * 0.016
-            }
-            
-            if dist < 350 {
-                e.shootTimer = e.shootTimer - 0.016
-                if e.shootTimer <= 0 {
-                    var bullet = {
-                        x: e.x,
-                        y: e.y,
-                        vx: nx * 200,
-                        vy: ny * 200,
-                        life: 3,
-                        damage: 5,
-                        isEnemy: true
-                    }
-                    enemyBullets.push(bullet)
-                    e.shootTimer = random(1, 3)
-                }
-            }
-        }
-        
-        var hitDist = e.size/2 + playerSize/2
-        var ddx = e.x - playerX
-        var ddy = e.y - playerY
-        if ddx * ddx + ddy * ddy < hitDist * hitDist {
-            hp = hp - 10
-            enemies.remove(i)
-            i = i - 1
-        }
-        
-        for j = 0; j < len(bullets); j = j + 1 {
-            var b = bullets[j]
-            var bdx = b.x - e.x
-            var bdy = b.y - e.y
-            var bDist = 4 + e.size/2
-            
-            if bdx * bdx + bdy * bdy < bDist * bDist {
-                e.hp = e.hp - b.damage
-                bullets.remove(j)
-                j = j - 1
-                
-                if e.hp <= 0 {
-                    score = score + 10
-                    enemies.remove(i)
-                    i = i - 1
-                    break
-                }
-            }
-        }
-    }
-}
-
-func updateBullets() {
-    for i = 0; i < len(bullets); i = i + 1 {
-        var b = bullets[i]
-        b.x = b.x + b.vx * 0.016
-        b.y = b.y + b.vy * 0.016
-        b.life = b.life - 0.016
-        
-        if b.x < -50 || b.x > 850 || b.y < -50 || b.y > 1250 || b.life <= 0 {
-            bullets.remove(i)
-            i = i - 1
-        }
-    }
-    
-    for i = 0; i < len(enemyBullets); i = i + 1 {
-        var b = enemyBullets[i]
-        b.x = b.x + b.vx * 0.016
-        b.y = b.y + b.vy * 0.016
-        b.life = b.life - 0.016
-        
-        var dx = b.x - playerX
-        var dy = b.y - playerY
-        if dx * dx + dy * dy < 400 {
-            hp = hp - b.damage
-            enemyBullets.remove(i)
-            i = i - 1
-            continue
-        }
-        
-        if b.x < -50 || b.x > 850 || b.y < -50 || b.y > 1250 || b.life <= 0 {
-            enemyBullets.remove(i)
-            i = i - 1
-        }
-    }
-}
-
-func restartGame() {
-    playerX = 400
-    playerY = 600
-    hp = maxHp
-    score = 0
-    wave = 1
-    bullets = []
-    enemyBullets = []
-    enemies = []
-    enemySpawnTimer = 3
-    gameOver = false
-    gameTime = 0
-    abilityReady = true
-    abilityCooldown = 0
-    spawnWave()
-}
-
-// ============================================
-// SETTINGS
-// ============================================
-func updateSettings() {
-    if input->tapped(Rect(290, 300, 220, 75)) {
-        musicOn = !musicOn
-        playButtonSound()
-    }
-    if input->tapped(Rect(290, 390, 220, 75)) {
-        sfxOn = !sfxOn
-        playButtonSound()
-    }
-    if input->tapped(Rect(20, 20, 140, 55)) {
-        gameState = "lobby"
-        playButtonSound()
-    }
-}
-
-func drawSettings() {
-    render->clear(0.02, 0.05, 0.2)
-    render->text("SETTINGS", 300, 100, 2.0)
-    
-    var musicText = "MUSIC: " + (musicOn ? "ON" : "OFF")
-    drawButton(Rect(290, 300, 220, 75), musicText, "blue")
-    
-    var sfxText = "SOUNDS: " + (sfxOn ? "ON" : "OFF")
-    drawButton(Rect(290, 390, 220, 75), sfxText, "blue")
-    
-    render->text("Nickname: " + nickname, 300, 500, 0.8)
-    drawButton(Rect(20, 20, 140, 55), "Back", "blue")
-}
-
-// ============================================
-// CREDITS
-// ============================================
-func drawCredits() {
-    render->clear(0.02, 0.05, 0.2)
-    render->text("CREDITS", 350, 100, 2.0)
-    render->text("Developers:", 350, 200, 1.0)
-    render->text("Dima Saraev – Creator", 320, 260, 0.8)
-    render->text("Dima Gustenyov – Owner", 320, 300, 0.8)
-    
-    drawButton(Rect(20, 20, 140, 55), "Back", "blue")
-    if input->tapped(Rect(20, 20, 140, 55)) {
-        gameState = "lobby"
-        playButtonSound()
-    }
-}
-
-// ============================================
-// MODE SELECT
-// ============================================
-func drawModeSelect() {
-    render->clear(0.02, 0.05, 0.2)
-    render->text("SELECT MODE", 300, 150, 1.5)
-    
-    drawButton(Rect(290, 300, 220, 75), "SINGLEPLAYER", "blue")
-    if input->tapped(Rect(290, 300, 220, 75)) {
-        gameState = "difficulty"
-        playButtonSound()
-    }
-    
-    drawButton(Rect(290, 400, 220, 75), "MULTIPLAYER", "green")
-    if input->tapped(Rect(290, 400, 220, 75)) {
-        gameState = "room"
-        playButtonSound()
-    }
-    
-    drawButton(Rect(20, 20, 140, 55), "Back", "blue")
-    if input->tapped(Rect(20, 20, 140, 55)) {
-        gameState = "lobby"
-        playButtonSound()
-    }
-}
-
-// ============================================
-// DIFFICULTY
-// ============================================
-func drawDifficulty() {
-    render->clear(0.02, 0.05, 0.2)
-    render->text("SELECT DIFFICULTY", 280, 150, 1.5)
-    
-    drawButton(Rect(290, 250, 220, 60), "EASY", "green")
-    if input->tapped(Rect(290, 250, 220, 60)) {
-        difficulty = "easy"
-        gameState = "game"
-        restartGame()
-        playButtonSound()
-    }
-    
-    drawButton(Rect(290, 320, 220, 60), "NORMAL", "blue")
-    if input->tapped(Rect(290, 320, 220, 60)) {
-        difficulty = "normal"
-        gameState = "game"
-        restartGame()
-        playButtonSound()
-    }
-    
-    drawButton(Rect(290, 390, 220, 60), "HARD", "red")
-    if input->tapped(Rect(290, 390, 220, 60)) {
-        difficulty = "hard"
-        gameState = "game"
-        restartGame()
-        playButtonSound()
-    }
-    
-    drawButton(Rect(290, 460, 220, 60), "IMPOSSIBLE", "purple")
-    if input->tapped(Rect(290, 460, 220, 60)) {
-        difficulty = "impossible"
-        gameState = "game"
-        restartGame()
-        playButtonSound()
-    }
-    
-    drawButton(Rect(20, 20, 140, 55), "Back", "blue")
-    if input->tapped(Rect(20, 20, 140, 55)) {
-        gameState = "mode_select"
-        playButtonSound()
-    }
-}
-
-// ============================================
-// ROOM
-// ============================================
-var roomInput = ""
-
-func updateRoom() {
-    if input->tapped(Rect(290, 400, 220, 60)) {
-        roomCode = roomInput
-        isOnline = true
-        gameState = "game"
-        restartGame()
-        playButtonSound()
-    }
-    if input->tapped(Rect(20, 20, 140, 55)) {
-        gameState = "mode_select"
-        playButtonSound()
-    }
-}
-
-func drawRoom() {
-    render->clear(0.02, 0.05, 0.2)
-    render->text("MULTIPLAYER ROOM", 280, 150, 1.5)
-    render->text("Enter room code:", 350, 250, 0.8)
-    render->drawRect(Rect(290, 300, 220, 50), "gray")
-    render->text(roomInput, 320, 315, 0.8)
-    drawButton(Rect(290, 400, 220, 60), "JOIN", "green")
-    drawButton(Rect(20, 20, 140, 55), "Back", "blue")
-}
-
-// ============================================
-// СИСТЕМНЫЕ ФУНКЦИИ
-// ============================================
-func drawButton(rect, text, color) {
-    render->drawRect(rect, color)
-    render->text(text, rect.x + 20, rect.y + 20, 0.6)
-}
-
-func playButtonSound() {
-    // звук
-}
-
-func loadSaveData() {
-    nickname = "Player"
-}
-
-func saveStats() {
-    // сохранение
-}
+-- ============================================================
+--  ДЛЯ ПК (МЫШЬ)
+-- ============================================================
+function love.mousepressed(x, y, button)
+    if button == 1 then
+        love.touchpressed(x, y)
+    end
+end
