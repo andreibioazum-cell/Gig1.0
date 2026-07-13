@@ -1,4 +1,4 @@
-name: Gig-Flow Compiler 3.0 (Full)
+name: Gig-Flow
 
 on:
   push:
@@ -8,394 +8,152 @@ on:
 jobs:
   build-windows:
     runs-on: windows-latest
-    timeout-minutes: 25
-
     steps:
-    - name: Checkout
-      uses: actions/checkout@v4
-
-    - name: Setup Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.11'
-
-    - name: Install MinGW
-      run: |
-        choco install mingw -y
-        echo "C:\ProgramData\chocolatey\lib\mingw\tools\install\mingw64\bin" >> $env:GITHUB_PATH
-
-    - name: Transpile Gig to C++
-      shell: bash
-      run: |
-        python3 << 'EOF'
-        import re
-
-        def transpile(code):
-            # Remove comments
-            code = re.sub(r'--.*$', '', code, flags=re.MULTILINE)
-            
-            # local x = 10 -> auto x = 10;
-            code = re.sub(r'local\s+(\w+)\s*=\s*([^;\n]+)', r'auto \1 = \2;', code)
-            
-            # function name(args) -> void name(args) {
-            code = re.sub(r'function\s+(\w+)\s*\(([^)]*)\)', r'void \1(\2) {', code)
-            
-            # function table:method(args) -> void table_method(args) {
-            code = re.sub(r'function\s+(\w+):(\w+)\s*\(([^)]*)\)', r'void \1_\2(\3) {', code)
-            
-            # table:method(args) -> table_method(args)
-            code = re.sub(r'(\w+):(\w+)\s*\(([^)]*)\)', r'\1_\2(\3)', code)
-            
-            # for i = 1, 10 do -> for (int i = 1; i <= 10; i++) {
-            code = re.sub(r'for\s+(\w+)\s*=\s*([^,]+)\s*,\s*([^,]+)\s+do', r'for (int \1 = \2; \1 <= \3; \1++) {', code)
-            
-            # while condition do -> while (condition) {
-            code = re.sub(r'while\s+([^\s]+)\s+do', r'while (\1) {', code)
-            
-            # if condition then -> if (condition) {
-            code = re.sub(r'if\s+([^\s]+)\s+then', r'if (\1) {', code)
-            code = re.sub(r'elseif\s+([^\s]+)\s+then', r'} else if (\1) {', code)
-            code = re.sub(r'else', r'} else {', code)
-            
-            # end -> }
-            code = re.sub(r'end', r'}', code)
-            
-            # print("text") -> LOGI("text")
-            code = re.sub(r'print\s*\(([^)]+)\)', r'LOGI(\1)', code)
-            
-            # return value -> return value;
-            code = re.sub(r'return\s+([^;\n]+)', r'return \1;', code)
-            
-            # math.floor(value) -> (int)(value)
-            code = re.sub(r'math\.floor\s*\(([^)]+)\)', r'(int)(\1)', code)
-            
-            # math.sqrt(value) -> sqrt(value)
-            code = re.sub(r'math\.sqrt\s*\(([^)]+)\)', r'sqrt(\1)', code)
-            
-            # math.random(N) -> rand() % N
-            code = re.sub(r'math\.random\s*\(([^)]+)\)', r'(rand() % \1)', code)
-            
-            # graphics.clear(r, g, b) -> glClearColor...
-            code = re.sub(r'graphics\.clear\s*\(([^,]+)\s*,\s*([^,]+)\s*,\s*([^)]+)\)', 
-                          r'glClearColor(\1, \2, \3, 1.0f); glClear(GL_COLOR_BUFFER_BIT)', code)
-            
-            # graphics.draw_sprite("name", x, y) -> draw_sprite("name", x, y)
-            code = re.sub(r'graphics\.draw_sprite\s*\(([^,]+)\s*,\s*([^,]+)\s*,\s*([^)]+)\)',
-                          r'draw_sprite(\1, \2, \3)', code)
-            
-            # graphics.draw_text("text", x, y, size) -> draw_text("text", x, y, size)
-            code = re.sub(r'graphics\.draw_text\s*\(([^,]+)\s*,\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^)]+)\)',
-                          r'draw_text(\1, \2, \3, \4)', code)
-            
-            # graphics.draw_circle(x, y, radius, color) -> draw_circle(x, y, radius, color)
-            code = re.sub(r'graphics\.draw_circle\s*\(([^,]+)\s*,\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^)]+)\)',
-                          r'draw_circle(\1, \2, \3, \4)', code)
-            
-            # graphics.draw_rect(x, y, w, h, color) -> draw_rect(x, y, w, h, color)
-            code = re.sub(r'graphics\.draw_rect\s*\(([^,]+)\s*,\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^)]+)\)',
-                          r'draw_rect(\1, \2, \3, \4, \5)', code)
-            
-            # input:is_down("key") -> is_key_down("key")
-            code = re.sub(r'input:is_down\s*\(([^)]+)\)', r'is_key_down(\1)', code)
-            
-            # input:is_tapped() -> is_tapped()
-            code = re.sub(r'input:is_tapped\s*\(\)', r'is_tapped()', code)
-            
-            # Fix string concatenation: "text" .. var -> "text" + std::to_string(var)
-            def concat_repl(match):
-                parts = match.group(0).split(' .. ')
-                result = []
-                for part in parts:
-                    part = part.strip()
-                    if part.startswith('"'):
-                        result.append(part)
-                    else:
-                        result.append(f'std::to_string({part})')
-                return ' + '.join(result)
-            code = re.sub(r'"[^"]+"\s*\.\.\s*\w+|\w+\s*\.\.\s*"[^"]+"', concat_repl, code)
-            
-            # Fix simple "text" .. var pattern
-            code = re.sub(r'(["\'])([^\1]*?)\1\s*\.\.\s*(\w+)', r'"\2" + std::to_string(\3)', code)
-            
-            # Add semicolons
-            lines = []
-            for line in code.split('\n'):
-                line = line.strip()
-                if line and not line.startswith('//') and not line.startswith('#include'):
-                    if line.endswith('{') or line.endswith('}') or line.endswith(';'):
-                        lines.append(line)
-                    else:
-                        lines.append(line + ';')
-                else:
-                    lines.append(line)
-            return '\n'.join(lines)
-
-        # Read main.gig in UTF-8
-        with open('main.gig', 'r', encoding='utf-8') as f:
-            code = f.read()
-
-        cpp = transpile(code)
-
-        main_cpp = '''
-        #include <GL/gl.h>
-        #include <GL/glu.h>
-        #include <stdio.h>
-        #include <string>
-        #include <cmath>
-        #include <cstdlib>
-        #include <ctime>
-
-        #define LOGI(...) printf(__VA_ARGS__)
-
-        float screen_width = 800;
-        float screen_height = 600;
-
-        void draw_sprite(const char* name, float x, float y) {
-            LOGI("draw_sprite: %s at %f, %f\\n", name, x, y);
-        }
-
-        void draw_text(const char* text, float x, float y, float size) {
-            LOGI("draw_text: %s at %f, %f (size: %f)\\n", text, x, y, size);
-        }
-
-        void draw_circle(float x, float y, float radius, const char* color) {
-            LOGI("draw_circle: at %f, %f radius %f color %s\\n", x, y, radius, color);
-        }
-
-        void draw_rect(float x, float y, float w, float h, const char* color) {
-            LOGI("draw_rect: at %f, %f %fx%f color %s\\n", x, y, w, h, color);
-        }
-
-        bool is_key_down(const char* key) {
-            return false;
-        }
-
-        bool is_tapped() {
-            return false;
-        }
-
-        ''' + cpp + '''
-
-        int main(int argc, char** argv) {
-            srand(time(NULL));
-            printf("Gig-Flow Game!\\n");
-            game_load();
-            
-            // Простой цикл (без GLUT)
-            while (1) {
-                game_update(0.016);
-                game_draw();
-            }
-            return 0;
-        }
-        '''
-
-        with open('main.cpp', 'w', encoding='utf-8') as f:
-            f.write(main_cpp)
-
-        EOF
-
-    - name: Compile EXE
-      run: |
-        g++ -O3 main.cpp -o GigFlow.exe -lgdi32 -lopengl32 -lglu32 -luser32 -lkernel32 -lwinmm
-
-    - name: Upload EXE
-      uses: actions/upload-artifact@v4
-      with:
-        name: GigFlow-Windows
-        path: GigFlow.exe
+      - uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install MinGW
+        run: choco install mingw -y
+      - name: Build
+        shell: bash
+        run: |
+          python3 << 'EOF'
+          import re
+          with open('main.gig', 'r', encoding='utf-8') as f:
+              code = f.read()
+          code = re.sub(r'--.*$', '', code, flags=re.MULTILINE)
+          code = re.sub(r'local\s+(\w+)\s*=\s*([^;\n]+)', r'auto \1 = \2;', code)
+          code = re.sub(r'function\s+(\w+)\s*\(([^)]*)\)', r'void \1(\2) {', code)
+          code = re.sub(r'end', r'}', code)
+          code = re.sub(r'print\s*\(([^)]+)\)', r'printf("\1\\n");', code)
+          code = re.sub(r'graphics\.draw_text\s*\(([^,]+)\s*,\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^)]+)\)', r'printf("\1 at %f, %f size %f\\n", \2, \3, \4);', code)
+          code = re.sub(r'graphics\.draw_circle\s*\(([^,]+)\s*,\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^)]+)\)', r'printf("circle at %f, %f radius %f color %s\\n", \1, \2, \3, \4);', code)
+          code = re.sub(r'graphics\.draw_rect\s*\(([^,]+)\s*,\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^)]+)\)', r'printf("rect at %f, %f %fx%f color %s\\n", \1, \2, \3, \4, \5);', code)
+          code = re.sub(r'graphics\.clear\s*\(([^,]+)\s*,\s*([^,]+)\s*,\s*([^)]+)\)', r'printf("clear %f %f %f\\n", \1, \2, \3);', code)
+          code = re.sub(r'math\.floor\s*\(([^)]+)\)', r'(int)(\1)', code)
+          code = re.sub(r'math\.sqrt\s*\(([^)]+)\)', r'sqrt(\1)', code)
+          code = re.sub(r'\"([^\"]+)\"\s*\.\.\s*(\w+)', r'printf("\1%f", \2)', code)
+          code = re.sub(r'(\w+)\s*\.\.\s*\"([^\"]+)\"', r'printf("%f\2", \1)', code)
+          code = re.sub(r'if\s+([^\n]+)\s+then', r'if (\1) {', code)
+          code = re.sub(r'elseif\s+([^\n]+)\s+then', r'} else if (\1) {', code)
+          code = re.sub(r'else', r'} else {', code)
+          code = re.sub(r'for\s+(\w+)\s*=\s*([^,]+)\s*,\s*([^,]+)\s+do', r'for (int \1 = \2; \1 <= \3; \1++) {', code)
+          code = re.sub(r'while\s+([^\n]+)\s+do', r'while (\1) {', code)
+          code = re.sub(r'return\s+([^;\n]+)', r'return \1;', code)
+          lines = []
+          for line in code.split('\n'):
+              line = line.strip()
+              if line and not line.startswith('//'):
+                  if not line.endswith('{') and not line.endswith('}') and not line.endswith(';'):
+                      line = line + ';'
+                  lines.append(line)
+              else:
+                  lines.append(line)
+          cpp = '''
+          #include <stdio.h>
+          #include <math.h>
+          #include <stdlib.h>
+          #include <time.h>
+          ''' + '\n'.join(lines) + '''
+          int main() {
+              srand(time(NULL));
+              game_load();
+              for (int i = 0; i < 10; i++) {
+                  game_update(0.016);
+                  game_draw();
+              }
+              return 0;
+          }
+          '''
+          with open('main.cpp', 'w') as f:
+              f.write(cpp)
+          EOF
+      - name: Compile
+        run: g++ -O3 main.cpp -o GigFlow.exe
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: GigFlow-Windows
+          path: GigFlow.exe
 
   build-android:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
-
     steps:
-    - name: Checkout
-      uses: actions/checkout@v4
-
-    - name: Setup Android SDK
-      uses: android-actions/setup-android@v3
-
-    - name: Install SDK Components
-      run: |
-        yes | sdkmanager --licenses
-        sdkmanager "platforms;android-34" "build-tools;34.0.0" "ndk;26.3.11579264"
-
-    - name: Set Android environment
-      run: |
-        echo "ANDROID_HOME=/usr/local/lib/android/sdk" >> $GITHUB_ENV
-        echo "ANDROID_NDK_HOME=/usr/local/lib/android/sdk/ndk/26.3.11579264" >> $GITHUB_ENV
-
-    - name: Transpile Gig to C++
-      shell: bash
-      run: |
-        python3 << 'EOF'
-        import re
-
-        def transpile(code):
-            code = re.sub(r'--.*$', '', code, flags=re.MULTILINE)
-            code = re.sub(r'local\s+(\w+)\s*=\s*([^;\n]+)', r'auto \1 = \2;', code)
-            code = re.sub(r'function\s+(\w+)\s*\(([^)]*)\)', r'void \1(\2) {', code)
-            code = re.sub(r'function\s+(\w+):(\w+)\s*\(([^)]*)\)', r'void \1_\2(\3) {', code)
-            code = re.sub(r'(\w+):(\w+)\s*\(([^)]*)\)', r'\1_\2(\3)', code)
-            code = re.sub(r'for\s+(\w+)\s*=\s*([^,]+)\s*,\s*([^,]+)\s+do', r'for (int \1 = \2; \1 <= \3; \1++) {', code)
-            code = re.sub(r'while\s+([^\s]+)\s+do', r'while (\1) {', code)
-            code = re.sub(r'if\s+([^\s]+)\s+then', r'if (\1) {', code)
-            code = re.sub(r'elseif\s+([^\s]+)\s+then', r'} else if (\1) {', code)
-            code = re.sub(r'else', r'} else {', code)
-            code = re.sub(r'end', r'}', code)
-            code = re.sub(r'print\s*\(([^)]+)\)', r'__android_log_print(ANDROID_LOG_INFO, "Gig", \1)', code)
-            code = re.sub(r'return\s+([^;\n]+)', r'return \1;', code)
-            code = re.sub(r'math\.floor\s*\(([^)]+)\)', r'(int)(\1)', code)
-            code = re.sub(r'math\.sqrt\s*\(([^)]+)\)', r'sqrt(\1)', code)
-            code = re.sub(r'math\.random\s*\(([^)]+)\)', r'(rand() % \1)', code)
-            code = re.sub(r'graphics\.clear\s*\(([^,]+)\s*,\s*([^,]+)\s*,\s*([^)]+)\)', r'glClearColor(\1, \2, \3, 1.0f); glClear(GL_COLOR_BUFFER_BIT)', code)
-            code = re.sub(r'graphics\.draw_sprite\s*\(([^,]+)\s*,\s*([^,]+)\s*,\s*([^)]+)\)', r'draw_sprite(\1, \2, \3)', code)
-            code = re.sub(r'graphics\.draw_text\s*\(([^,]+)\s*,\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^)]+)\)', r'draw_text(\1, \2, \3, \4)', code)
-            code = re.sub(r'graphics\.draw_circle\s*\(([^,]+)\s*,\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^)]+)\)', r'draw_circle(\1, \2, \3, \4)', code)
-            code = re.sub(r'graphics\.draw_rect\s*\(([^,]+)\s*,\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^)]+)\)', r'draw_rect(\1, \2, \3, \4, \5)', code)
-            code = re.sub(r'input:is_down\s*\(([^)]+)\)', r'is_key_down(\1)', code)
-            code = re.sub(r'input:is_tapped\s*\(\)', r'is_tapped()', code)
-            
-            def concat_repl(match):
-                parts = match.group(0).split(' .. ')
-                result = []
-                for part in parts:
-                    part = part.strip()
-                    if part.startswith('"'):
-                        result.append(part)
-                    else:
-                        result.append(f'std::to_string({part})')
-                return ' + '.join(result)
-            code = re.sub(r'"[^"]+"\s*\.\.\s*\w+|\w+\s*\.\.\s*"[^"]+"', concat_repl, code)
-            
-            lines = []
-            for line in code.split('\n'):
-                line = line.strip()
-                if line and not line.startswith('//') and not line.startswith('#include'):
-                    if line.endswith('{') or line.endswith('}') or line.endswith(';'):
-                        lines.append(line)
-                    else:
-                        lines.append(line + ';')
-                else:
-                    lines.append(line)
-            return '\n'.join(lines)
-
-        with open('main.gig', 'r', encoding='utf-8') as f:
-            user_code = transpile(f.read())
-
-        cpp = '''
-        #include <android_native_app_glue.h>
-        #include <GLES2/gl2.h>
-        #include <EGL/egl.h>
-        #include <android/log.h>
-        #include <string>
-        #include <cmath>
-        #include <cstdlib>
-        #include <ctime>
-
-        #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "Gig", __VA_ARGS__)
-
-        void draw_sprite(const char* name, float x, float y) {
-            LOGI("draw_sprite: %s at %f, %f", name, x, y);
-        }
-
-        void draw_text(const char* text, float x, float y, float size) {
-            LOGI("draw_text: %s at %f, %f (size: %f)", text, x, y, size);
-        }
-
-        void draw_circle(float x, float y, float radius, const char* color) {
-            LOGI("draw_circle: at %f, %f radius %f color %s", x, y, radius, color);
-        }
-
-        void draw_rect(float x, float y, float w, float h, const char* color) {
-            LOGI("draw_rect: at %f, %f %fx%f color %s", x, y, w, h, color);
-        }
-
-        bool is_key_down(const char* key) {
-            return false;
-        }
-
-        bool is_tapped() {
-            return false;
-        }
-
-        ''' + user_code + '''
-
-        void android_main(struct android_app* state) {
-            srand(time(NULL));
-            EGLDisplay display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
-            eglInitialize(display, NULL, NULL);
-
-            EGLint attribs[] = {EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT, EGL_SURFACE_TYPE, EGL_WINDOW_BIT, EGL_NONE};
-            EGLConfig config; EGLint n;
-            eglChooseConfig(display, attribs, &config, 1, &n);
-            EGLContext context = eglCreateContext(display, config, NULL, new EGLint[3]{EGL_CONTEXT_CLIENT_VERSION, 2, EGL_NONE});
-            EGLSurface surface = EGL_NO_SURFACE;
-
-            int events; struct android_poll_source* source;
-
-            game_load();
-
-            while (1) {
-                while (ALooper_pollOnce(state->window ? 0 : -1, NULL, &events, (void**)&source) >= 0) {
-                    if (source) source->process(state, source);
-                    if (state->destroyRequested) return;
-                }
-
-                if (state->window && surface == EGL_NO_SURFACE) {
-                    surface = eglCreateWindowSurface(display, config, state->window, NULL);
-                    eglMakeCurrent(display, surface, surface, context);
-                }
-
-                if (surface != EGL_NO_SURFACE) {
-                    game_update(0.016);
-                    game_draw();
-                    eglSwapBuffers(display, surface);
-                }
-            }
-        }
-        '''
-
-        with open('main.cpp', 'w', encoding='utf-8') as f:
-            f.write(cpp)
-
-        EOF
-
-    - name: Compile SO
-      run: |
-        NDK=$ANDROID_NDK_HOME
-        TC=$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin
-        GLUE=$NDK/sources/android/native_app_glue
-        
-        if [ ! -d "$NDK" ]; then
-          echo "NDK not found at $NDK"
-          exit 1
-        fi
-        
-        $TC/aarch64-linux-android34-clang -c $GLUE/android_native_app_glue.c -o glue.o -I$GLUE -fPIC
-        $TC/aarch64-linux-android34-clang++ main.cpp glue.o -I$GLUE -shared -fPIC -O3 -landroid -lGLESv2 -lEGL -o libmain.so
-
-    - name: Package APK
-      run: |
-        mkdir -p staging/lib/arm64-v8a && cp libmain.so staging/lib/arm64-v8a/
-        cat > AndroidManifest.xml << 'XML'
-        <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.gig.flow">
-          <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="34"/>
-          <application android:hasCode="false" android:label="Gig" android:extractNativeLibs="true">
-            <activity android:name="android.app.NativeActivity" android:exported="true" android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
-              <meta-data android:name="android.app.lib_name" android:value="main"/>
-              <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
-            </activity>
-          </application>
-        </manifest>
-        XML
-        $ANDROID_HOME/build-tools/34.0.0/aapt package -f -M AndroidManifest.xml -I $ANDROID_HOME/platforms/android-34/android.jar -F app.apk staging/
-        keytool -genkey -keystore k.keystore -alias g -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=G" -storepass 123456 -keypass 123456 || true
-        $ANDROID_HOME/build-tools/34.0.0/apksigner sign --ks k.keystore --ks-pass pass:123456 --out GigFlow.apk app.apk
-
-    - name: Upload APK
-      uses: actions/upload-artifact@v4
-      with:
-        name: GigFlow-Android
-        path: GigFlow.apk
+      - uses: actions/checkout@v4
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+      - name: Install NDK
+        run: |
+          yes | sdkmanager --licenses
+          sdkmanager "ndk;26.3.11579264"
+      - name: Build
+        shell: bash
+        run: |
+          python3 << 'EOF'
+          import re
+          with open('main.gig', 'r', encoding='utf-8') as f:
+              code = f.read()
+          code = re.sub(r'--.*$', '', code, flags=re.MULTILINE)
+          code = re.sub(r'local\s+(\w+)\s*=\s*([^;\n]+)', r'auto \1 = \2;', code)
+          code = re.sub(r'function\s+(\w+)\s*\(([^)]*)\)', r'void \1(\2) {', code)
+          code = re.sub(r'end', r'}', code)
+          code = re.sub(r'print\s*\(([^)]+)\)', r'printf("\1\\n");', code)
+          code = re.sub(r'graphics\.draw_text\s*\(([^,]+)\s*,\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^)]+)\)', r'printf("\1 at %f, %f size %f\\n", \2, \3, \4);', code)
+          code = re.sub(r'graphics\.draw_circle\s*\(([^,]+)\s*,\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^)]+)\)', r'printf("circle at %f, %f radius %f color %s\\n", \1, \2, \3, \4);', code)
+          code = re.sub(r'graphics\.draw_rect\s*\(([^,]+)\s*,\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^)]+)\)', r'printf("rect at %f, %f %fx%f color %s\\n", \1, \2, \3, \4, \5);', code)
+          code = re.sub(r'graphics\.clear\s*\(([^,]+)\s*,\s*([^,]+)\s*,\s*([^)]+)\)', r'printf("clear %f %f %f\\n", \1, \2, \3);', code)
+          code = re.sub(r'math\.floor\s*\(([^)]+)\)', r'(int)(\1)', code)
+          code = re.sub(r'math\.sqrt\s*\(([^)]+)\)', r'sqrt(\1)', code)
+          code = re.sub(r'\"([^\"]+)\"\s*\.\.\s*(\w+)', r'printf("\1%f", \2)', code)
+          code = re.sub(r'(\w+)\s*\.\.\s*\"([^\"]+)\"', r'printf("%f\2", \1)', code)
+          code = re.sub(r'if\s+([^\n]+)\s+then', r'if (\1) {', code)
+          code = re.sub(r'elseif\s+([^\n]+)\s+then', r'} else if (\1) {', code)
+          code = re.sub(r'else', r'} else {', code)
+          code = re.sub(r'for\s+(\w+)\s*=\s*([^,]+)\s*,\s*([^,]+)\s+do', r'for (int \1 = \2; \1 <= \3; \1++) {', code)
+          code = re.sub(r'while\s+([^\n]+)\s+do', r'while (\1) {', code)
+          code = re.sub(r'return\s+([^;\n]+)', r'return \1;', code)
+          lines = []
+          for line in code.split('\n'):
+              line = line.strip()
+              if line and not line.startswith('//'):
+                  if not line.endswith('{') and not line.endswith('}') and not line.endswith(';'):
+                      line = line + ';'
+                  lines.append(line)
+              else:
+                  lines.append(line)
+          cpp = '''
+          #include <stdio.h>
+          #include <math.h>
+          #include <stdlib.h>
+          #include <time.h>
+          ''' + '\n'.join(lines) + '''
+          int main() {
+              srand(time(NULL));
+              game_load();
+              for (int i = 0; i < 10; i++) {
+                  game_update(0.016);
+                  game_draw();
+              }
+              return 0;
+          }
+          '''
+          with open('main.cpp', 'w') as f:
+              f.write(cpp)
+          EOF
+      - name: Compile
+        run: |
+          NDK=$ANDROID_HOME/ndk/26.3.11579264
+          TC=$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin
+          $TC/aarch64-linux-android34-clang++ main.cpp -o libmain.so -shared -fPIC -O3 -static-libstdc++
+      - name: Package
+        run: |
+          mkdir -p lib/arm64-v8a
+          cp libmain.so lib/arm64-v8a/
+          zip -r GigFlow.apk lib
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: GigFlow-Android
+          path: GigFlow.apk
