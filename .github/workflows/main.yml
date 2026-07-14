@@ -19,7 +19,6 @@ jobs:
       - name: Create Demo main.gig
         shell: bash
         run: |
-          # Принудительно перезаписываем main.gig, чтобы избежать конфликтов со старыми версиями
           cat << 'EOF' > main.gig
           import graphics
           import physics2d
@@ -107,32 +106,22 @@ jobs:
 
           processed_lines = []
           for line in lines:
-              # Удаление комментариев
               line = re.sub(r'--.*$', '', line)
-              # Пропуск импортов
               if re.match(r'^\s*import\s+', line):
                   continue
               processed_lines.append(line)
 
           code = "".join(processed_lines)
 
-          # Сначала обрабатываем вызовы методов API: объект:метод(...) -> объект_метод(...)
           code = re.sub(r'(\w+):(\w+)\s*\(([^)]*)\)', r'\1_\2(\3)', code)
-
-          # Конвертация функций. Автоматически типизируем аргументы, заменяя (dt) на (float dt)
           code = re.sub(r'function\s+(\w+)\s*\(\s*dt\s*\)', r'void \1(float dt) {', code)
           code = re.sub(r'function\s+(\w+)\s*\(([^)]*)\)', r'void \1(\2) {', code)
           code = re.sub(r'function\s+(\w+)_(\w+)\s*\(([^)]*)\)', r'void \1_\2(\3) {', code)
-
-          # Закрытие блоков end -> }
           code = re.sub(r'\bend\b', r'}', code)
 
-          # Сверхточный автовывод типов локальных переменных в C++
           def var_replacer(match):
               var_name = match.group(1)
               val = match.group(2).strip()
-              
-              # Проверяем, возвращает ли правая часть строку
               if val.startswith('"') or val.endswith('"'):
                   return f'const char* {var_name} = {val};'
               elif 'storage_load' in val or 'json_encode' in val or 'json_decode' in val:
@@ -146,18 +135,15 @@ jobs:
               elif val.startswith('{'):
                   return f'std::vector<int> {var_name};'
               else:
-                  # По умолчанию используем float для игровых переменных, чтобы избежать конфликтов преобразования
                   return f'float {var_name} = {val};'
 
           code = re.sub(r'local\s+(\w+)\s*=\s*([^;\n]+)', var_replacer, code)
 
-          # Замена функций стандартного вывода (printf)
           code = re.sub(r'print\s*\(\s*"([^"]*)"\s*\)', r'printf("\1\\n");', code)
           code = re.sub(r'print\s*\(\s*"([^"]*)"\s*\.\.\s*(\w+)\s*\)', r'printf("\1 %f\\n", (float)\2);', code)
           code = re.sub(r'print\s*\(\s*(\w+)\s*\.\.\s*"([^"]*)"\s*\)', r'printf("%f \2\\n", (float)\1);', code)
           code = re.sub(r'print\s*\(\s*"([^"]*)"\s*\.\.\s*"([^"]*)"\s*\)', r'printf("\1\2\\n");', code)
 
-          # Специфические замены для графики
           code = re.sub(r'graphics_draw_text\s*\(\s*"([^"]*)"\s*\.\.\s*(\w+)\s*,\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^)]+)\)',
                         r'printf("\1 %f at %f, %f size %f\\n", (float)\2, (float)\3, (float)\4, (float)\5);', code)
           code = re.sub(r'graphics_draw_text\s*\(\s*"([^"]*)"\s*,\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^)]+)\)',
@@ -170,7 +156,6 @@ jobs:
           code = re.sub(r'graphics_clear\s*\(([^,]+)\s*,\s*([^,]+)\s*,\s*([^)]+)\)',
                         r'printf("clear %f %f %f\\n", (float)\1, (float)\2, (float)\3);', code)
 
-          # Математика
           code = re.sub(r'math\.floor\s*\(([^)]+)\)', r'(int)(\1)', code)
           code = re.sub(r'math\.sqrt\s*\(([^)]+)\)', r'sqrt(\1)', code)
           code = re.sub(r'math\.random\s*\(([^)]+)\)', r'(rand() % \1)', code)
@@ -178,22 +163,18 @@ jobs:
           code = re.sub(r'math\.max\s*\(([^,]+)\s*,\s*([^)]+)\)', r'(\1 > \2 ? \1 : \2)', code)
           code = re.sub(r'math\.abs\s*\(([^)]+)\)', r'abs(\1)', code)
 
-          # Управляющие конструкции
           code = re.sub(r'if\s+([^\n]+)\s+then', r'if (\1) {', code)
           code = re.sub(r'elseif\s+([^\n]+)\s+then', r'} else if (\1) {', code)
           code = re.sub(r'else', r'} else {', code)
 
           code = re.sub(r'for\s+(\w+)\s*=\s*([^,]+)\s*,\s*([^,]+)\s+do', r'for (int \1 = \2; \1 <= \3; \1++) {', code)
           code = re.sub(r'while\s+([^\n]+)\s+do', r'while (\1) {', code)
-
           code = re.sub(r'return\s+([^;\n]+)', r'return \1;', code)
 
-          # Логические операторы
           code = re.sub(r'\band\b', r'&&', code)
           code = re.sub(r'\bor\b', r'||', code)
           code = re.sub(r'\bnot\b', r'!', code)
 
-          # Строим структуру файла C++ без двойных точек с запятой
           lines = []
           for line in code.split('\n'):
               line = line.strip()
@@ -215,7 +196,6 @@ jobs:
           #include <string>
           #include <map>
 
-          // --- GIG FRAMEWORK ENGINE RUNTIME STUBS ---
           void graphics_clear(float r, float g, float b) { printf("clear %f %f %f\\n", r, g, b); }
           void graphics_draw_rect(float x, float y, float w, float h, const char* color) { printf("rect %f,%f %fx%f color %s\\n", x,y,w,h,color); }
           void graphics_draw_circle(float x, float y, float r, const char* color) { printf("circle %f,%f radius %f color %s\\n", x,y,r,color); }
@@ -270,7 +250,6 @@ jobs:
           // --- TRANSPILED CODE STARTS HERE ---
           ''' + cpp_code + '''
 
-          // --- ENTRY POINT ---
           int main() {
               srand(time(NULL));
               game_load();
@@ -298,12 +277,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Setup Java JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
-      - name: Install NDK
+
+      - name: Install NDK and Build Tools
         run: |
           yes | sdkmanager --licenses
-          sdkmanager "ndk;26.3.11579264"
+          sdkmanager "ndk;26.3.11579264" "build-tools;34.0.0" "platforms;android-34"
+
       - name: Build Android Shared Library Source
         shell: bash
         run: |
@@ -323,11 +310,9 @@ jobs:
           code = "".join(processed_lines)
 
           code = re.sub(r'(\w+):(\w+)\s*\(([^)]*)\)', r'\1_\2(\3)', code)
-
           code = re.sub(r'function\s+(\w+)\s*\(\s*dt\s*\)', r'void \1(float dt) {', code)
           code = re.sub(r'function\s+(\w+)\s*\(([^)]*)\)', r'void \1(\2) {', code)
           code = re.sub(r'function\s+(\w+)_(\w+)\s*\(([^)]*)\)', r'void \1_\2(\3) {', code)
-
           code = re.sub(r'\bend\b', r'}', code)
 
           def var_replacer(match):
@@ -380,7 +365,6 @@ jobs:
 
           code = re.sub(r'for\s+(\w+)\s*=\s*([^,]+)\s*,\s*([^,]+)\s+do', r'for (int \1 = \2; \1 <= \3; \1++) {', code)
           code = re.sub(r'while\s+([^\n]+)\s+do', r'while (\1) {', code)
-
           code = re.sub(r'return\s+([^;\n]+)', r'return \1;', code)
 
           code = re.sub(r'\band\b', r'&&', code)
@@ -467,13 +451,11 @@ jobs:
 
           struct android_app;
           extern "C" {
-              void android_main(struct android_app* state) {
-                  LOGI("Gig App Started on Android");
+              void ANativeActivity_onCreate(void* activity, void* savedState, size_t savedStateSize) {
+                  LOGI("ANativeActivity Created");
                   game_load();
-                  for(int i=0; i<10; i++) {
-                      game_update(0.016f);
-                      game_draw();
-                  }
+                  game_update(0.016f);
+                  game_draw();
               }
           }
           '''
@@ -482,16 +464,82 @@ jobs:
               f.write(cpp)
           EOF
 
-      - name: Compile Android shared library
+      - name: Compile Android shared library (.so)
         run: |
           NDK=$ANDROID_HOME/ndk/26.3.11579264
           TC=$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin
-          $TC/aarch64-linux-android34-clang++ main.cpp -o libmain.so -shared -fPIC -O3 -static-libstdc++ -lm -llog
-      - name: Package APK Structure
+          $TC/aarch64-linux-android34-clang++ main.cpp -o libmain.so -shared -fPIC -O3 -static-libstdc++ -lm -llog -landroid
+
+      - name: Generate Valid Android Package Structure (APK)
         run: |
-          mkdir -p lib/arm64-v8a
-          cp libmain.so lib/arm64-v8a/
-          zip -r GigFlow.apk lib
+          # 1. Создаем структуру директорий будущего Android-приложения
+          mkdir -p project/assets
+          mkdir -p project/res/values
+          mkdir -p project/lib/arm64-v8a
+          
+          # Копируем скомпилированную С++ библиотеку
+          cp libmain.so project/lib/arm64-v8a/
+
+          # 2. Создаем Strings.xml (требуется для манифеста)
+          cat << 'EOF' > project/res/values/strings.xml
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <string name="app_name">GigFlow Game</string>
+          </resources>
+          EOF
+
+          # 3. Создаем корректный AndroidManifest.xml (На базе NativeActivity)
+          cat << 'EOF' > project/AndroidManifest.xml
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android"
+              package="com.androbiome.gigflow"
+              android:versionCode="1"
+              android:versionName="1.0">
+              
+              <uses-sdk android:minSdkVersion="21" android:targetSdkVersion="34" />
+              <uses-feature android:glEsVersion="0x00020000" android:required="true" />
+              
+              <application android:label="@string/app_name" android:hasCode="false">
+                  <activity android:name="android.app.NativeActivity"
+                      android:label="@string/app_name"
+                      android:configChanges="orientation|keyboardHidden|screenSize"
+                      android:exported="true">
+                      <meta-data android:name="android.app.lib_name" android:value="main" />
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          EOF
+
+      - name: Package, Align and Sign APK
+        run: |
+          # Переменные путей Android SDK Build-Tools
+          BUILD_TOOLS=$ANDROID_HOME/build-tools/34.0.0
+          PLATFORM=$ANDROID_HOME/platforms/android-34/android.jar
+
+          # 1. Компилируем ресурсы и собираем неподписанный APK
+          $BUILD_TOOLS/aapt package -f -M project/AndroidManifest.xml -S project/res -I $PLATFORM -F unsigned.apk
+          
+          # Помещаем libmain.so внутрь APK структуры
+          cd project
+          zip -u ../unsigned.apk lib/arm64-v8a/libmain.so
+          cd ..
+
+          # 2. Оптимизируем байт-код архива (zipalign)
+          $BUILD_TOOLS/zipalign -v -p 4 unsigned.apk aligned.apk
+
+          # 3. Генерируем временный ключ подписи Keystore
+          keytool -genkeypair -v -keystore release.keystore -alias gig_key -keyalg RSA -keysize 2048 -validity 10000 -storepass "android" -keypass "android" -dname "CN=Androbiome, O=Gig, C=RU"
+
+          # 4. Подписываем выровненный APK сгенерированной подписью (apksigner)
+          $BUILD_TOOLS/apksigner sign --keystore release.keystore --storepass "android" --keypass "android" --out GigFlow.apk aligned.apk
+
+          # Проверяем успешность подписи
+          $BUILD_TOOLS/apksigner verify GigFlow.apk
+
       - name: Upload Android Artifacts
         uses: actions/upload-artifact@v4
         with:
