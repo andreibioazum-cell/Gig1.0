@@ -472,15 +472,12 @@ jobs:
 
       - name: Generate Valid Android Package Structure (APK)
         run: |
-          # 1. Создаем структуру директорий будущего Android-приложения
           mkdir -p project/assets
           mkdir -p project/res/values
           mkdir -p project/lib/arm64-v8a
           
-          # Копируем скомпилированную С++ библиотеку
           cp libmain.so project/lib/arm64-v8a/
 
-          # 2. Создаем Strings.xml (требуется для манифеста)
           cat << 'EOF' > project/res/values/strings.xml
           <?xml version="1.0" encoding="utf-8"?>
           <resources>
@@ -488,7 +485,6 @@ jobs:
           </resources>
           EOF
 
-          # 3. Создаем корректный AndroidManifest.xml (На базе NativeActivity)
           cat << 'EOF' > project/AndroidManifest.xml
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android"
@@ -516,28 +512,27 @@ jobs:
 
       - name: Package, Align and Sign APK
         run: |
-          # Переменные путей Android SDK Build-Tools
           BUILD_TOOLS=$ANDROID_HOME/build-tools/34.0.0
           PLATFORM=$ANDROID_HOME/platforms/android-34/android.jar
 
-          # 1. Компилируем ресурсы и собираем неподписанный APK
+          # 1. Сборка ресурсов
           $BUILD_TOOLS/aapt package -f -M project/AndroidManifest.xml -S project/res -I $PLATFORM -F unsigned.apk
           
-          # Помещаем libmain.so внутрь APK структуры
+          # Упаковываем C++ библиотеку
           cd project
           zip -u ../unsigned.apk lib/arm64-v8a/libmain.so
           cd ..
 
-          # 2. Оптимизируем байт-код архива (zipalign)
+          # 2. Выравнивание (zipalign)
           $BUILD_TOOLS/zipalign -v -p 4 unsigned.apk aligned.apk
 
-          # 3. Генерируем временный ключ подписи Keystore
+          # 3. Генерация самоподписанного сертификата
           keytool -genkeypair -v -keystore release.keystore -alias gig_key -keyalg RSA -keysize 2048 -validity 10000 -storepass "android" -keypass "android" -dname "CN=Androbiome, O=Gig, C=RU"
 
-          # 4. Подписываем выровненный APK сгенерированной подписью (apksigner)
-          $BUILD_TOOLS/apksigner sign --keystore release.keystore --storepass "android" --keypass "android" --out GigFlow.apk aligned.apk
+          # 4. Подпись APK с исправленным синтаксисом параметров (--ks вместо --keystore)
+          $BUILD_TOOLS/apksigner sign --ks release.keystore --storepass "android" --keypass "android" --out GigFlow.apk aligned.apk
 
-          # Проверяем успешность подписи
+          # 5. Верификация
           $BUILD_TOOLS/apksigner verify GigFlow.apk
 
       - name: Upload Android Artifacts
