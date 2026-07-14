@@ -1,39 +1,82 @@
-local clicks = 0
-local power = 1
-local score = 0
+import graphics
+import physics2d
+import audio
+import input
+import ui
+import timer
+import tween
+import storage
+import firebase
+import camera
+import json
 
-local enemies = {}
-local enemy_count = 0
+local score = 0
+local highScore = 0
+local isGameOver = 0
+local playerX = 100
+local playerY = 100
 
 function game_load()
-    print("Game loaded!")
-    for i = 1, 5 do
-        table.insert(enemies, i * 10)
-    end
-    enemy_count = #enemies
+    storage:save("high_score.dat", "250")
+    local savedData = storage:load("high_score.dat")
+    highScore = 250
+    
+    physics2d:newWorld(0.0, 9.81)
+    physics2d:newBody("player", 100, 100, "dynamic")
+    physics2d:newBody("floor", 0, 500, "static")
+
+    audio:load("jump_sound", "assets/audio/jump.wav")
+    audio:load("coin_sound", "assets/audio/coin.wav")
+    audio:play("coin_sound")
+
+    ui:newMenu("main_menu")
+    ui:newHUD()
+
+    camera:new()
+    camera:follow(100, 100)
+
+    local playerData = json:encode("name", "GigDeveloper")
+    firebase:init("https://gig-demo-database.firebaseio.com/")
+    firebase:put("users/player_1/score", "250")
+
+    timer:new(1000, "on_second_elapsed")
+    
+    print("Gig Engine: Game Loaded successfully!")
+end
+
+function on_second_elapsed()
+    score = score + 10
+    print("Timer tick! Current score updated to: " .. score)
 end
 
 function game_update(dt)
-    clicks = clicks + power * dt
-    score = math.floor(clicks)
-    enemy_count = #enemies
+    if input:key_pressed("space") then
+        audio:play("jump_sound")
+        score = score + 1
+        playerY = playerY - 15
+        tween:to("player", 0.5, "y")
+    end
+
+    if input:key_pressed("right") then
+        playerX = playerX + 5
+    end
+
+    if input:key_pressed("left") then
+        playerX = playerX - 5
+    end
 end
 
 function game_draw()
-    graphics.clear(0.1, 0.2, 0.3)
-    graphics.draw_text("Clicks", 10, 10, 20)
-    graphics.draw_circle(400, 300, 50, "green")
-    graphics.draw_rect(10, 50, 100, 30, "blue")
-    print("Score: " .. score)
-end
+    camera:apply()
 
-function love_touchpressed(x, y)
-    clicks = clicks + 1
-    print("Click!")
-end
+    graphics:clear(0.15, 0.15, 0.15)
 
-function love_mousepressed(x, y, button)
-    if button == 1 then
-        love_touchpressed(x, y)
-    end
+    graphics:draw_rect(0, 500, 800, 100, "green")
+
+    graphics:draw_circle(playerX, playerY, 30, "blue")
+
+    graphics:draw_text("SCORE: " .. score, 20, 40, 24)
+    graphics:draw_text("HIGH SCORE: " .. highScore, 20, 80, 20)
+
+    camera:unapply()
 end
