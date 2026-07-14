@@ -16,71 +16,85 @@ jobs:
           python-version: '3.11'
       - name: Install MinGW
         run: choco install mingw -y
-      - name: Create Demo main.gig (if not exists)
+      - name: Create Demo main.gig
         shell: bash
         run: |
-          if [ ! -f main.gig ]; then
-            cat << 'EOF' > main.gig
-            import graphics
-            import physics2d
-            import audio
-            import input
-            import ui
-            import timer
-            import tween
-            import storage
-            import firebase
-            import camera
-            import json
+          # Принудительно перезаписываем main.gig, чтобы избежать конфликтов со старыми версиями
+          cat << 'EOF' > main.gig
+          import graphics
+          import physics2d
+          import audio
+          import input
+          import ui
+          import timer
+          import tween
+          import storage
+          import firebase
+          import camera
+          import json
 
-            local score = 0
-            local highScore = 100
-            local isGameOver = 0
+          local score = 0
+          local highScore = 100
+          local isGameOver = 0
+          local playerX = 100
+          local playerY = 100
 
-            function game_load()
-                storage:save("save.dat", "100")
-                local loadedScore = storage:load("save.dat")
-                
-                physics2d:newWorld(0.0, 9.8)
-                physics2d:newBody("player", 100, 100, "dynamic")
-                
-                audio:load("jump", "jump.wav")
-                audio:play("jump")
-                
-                ui:newMenu("main")
-                ui:newHUD()
-                
-                timer:new(1000, "onTimer")
-                tween:to("player", 2.0, "x=200")
-                
-                camera:new()
-                camera:follow(100, 100)
-                
-                local jsonStr = json:encode("score", "100")
-                
-                firebase:init("https://gig-default-rtdb.firebaseio.com/")
-                firebase:put("scores/player1", "100")
-                
-                print("Game Loaded Successfully")
-            end
+          function game_load()
+              storage:save("save.dat", "100")
+              local loadedScore = storage:load("save.dat")
+              
+              physics2d:newWorld(0.0, 9.8)
+              physics2d:newBody("player", 100, 100, "dynamic")
+              
+              audio:load("jump", "jump.wav")
+              audio:play("jump")
+              
+              ui:newMenu("main")
+              ui:newHUD()
+              
+              input:newJoystick("movement_stick", 120, 480, 80, 40)
+              
+              timer:new(1000, "onTimer")
+              tween:to("player", 2.0, "x=200")
+              
+              camera:new()
+              camera:follow(100, 100)
+              
+              local jsonStr = json:encode("score", "100")
+              
+              firebase:init("https://gig-default-rtdb.firebaseio.com/")
+              firebase:put("scores/player1", "100")
+              
+              print("Game Loaded Successfully")
+          end
 
-            function game_update(dt)
-                if input:key_pressed("space") then
-                    audio:play("jump")
-                    score = score + 1
-                end
-            end
+          function game_update(dt)
+              local joyX = input:getJoystickAxis("movement_stick", "x")
+              local joyY = input:getJoystickAxis("movement_stick", "y")
+              
+              playerX = playerX + joyX * 5
+              playerY = playerY + joyY * 5
 
-            function game_draw()
-                camera:apply()
-                graphics:clear(0.1, 0.1, 0.1)
-                graphics:draw_rect(0, 500, 800, 100, "green")
-                graphics:draw_circle(400, 300, 50, "red")
-                graphics:draw_text("Score: " .. score, 10, 30, 20)
-                camera:unapply()
-            end
+              if input:key_pressed("space") then
+                  audio:play("jump")
+                  score = score + 1
+              end
+          end
+
+          function game_draw()
+              camera:apply()
+              graphics:clear(0.1, 0.1, 0.1)
+              graphics:draw_rect(0, 500, 800, 100, "green")
+              graphics:draw_circle(playerX, playerY, 30, "blue")
+              graphics:draw_text("Score: " .. score, 10, 30, 20)
+              
+              graphics:draw_circle(120, 480, 80, "gray")
+              graphics:draw_circle(120, 480, 40, "white")
+              
+              camera:unapply()
+          end
           EOF
-          fi
+          echo "Demo main.gig has been successfully written."
 
       - name: Build C++ Source
         shell: bash
@@ -89,39 +103,66 @@ jobs:
           import re
 
           with open('main.gig', 'r', encoding='utf-8') as f:
-              code = f.read()
+              lines = f.readlines()
 
-          # Удаляем комментарии и строки импорта
-          code = re.sub(r'--.*$', '', code, flags=re.MULTILINE)
-          code = re.sub(r'import\s+\w+', '', code)
+          processed_lines = []
+          for line in lines:
+              # Удаление комментариев
+              line = re.sub(r'--.*$', '', line)
+              # Пропуск импортов
+              if re.match(r'^\s*import\s+', line):
+                  continue
+              processed_lines.append(line)
 
-          # Переменные (Приведение к типам C++)
-          code = re.sub(r'local\s+(\w+)\s*=\s*\{\s*\}', r'std::vector<int> \1;', code)
-          code = re.sub(r'local\s+(\w+)\s*=\s*"([^"]*)"', r'const char* \1 = "\2";', code)
-          code = re.sub(r'local\s+(\w+)\s*=\s*([^;\n]+)', r'int \1 = \2;', code)
+          code = "".join(processed_lines)
 
-          # Функции
-          code = re.sub(r'function\s+(\w+)\s*\(([^)]*)\)', r'void \1(\2) {', code)
-          code = re.sub(r'function\s+(\w+):(\w+)\s*\(([^)]*)\)', r'void \1_\2(\3) {', code)
-          
-          # Вызовы API-методов вида object:method(...) -> object_method(...)
+          # Сначала обрабатываем вызовы методов API: объект:метод(...) -> объект_метод(...)
           code = re.sub(r'(\w+):(\w+)\s*\(([^)]*)\)', r'\1_\2(\3)', code)
 
-          code = re.sub(r'end', r'}', code)
+          # Конвертация функций. Автоматически типизируем аргументы, заменяя (dt) на (float dt)
+          code = re.sub(r'function\s+(\w+)\s*\(\s*dt\s*\)', r'void \1(float dt) {', code)
+          code = re.sub(r'function\s+(\w+)\s*\(([^)]*)\)', r'void \1(\2) {', code)
+          code = re.sub(r'function\s+(\w+)_(\w+)\s*\(([^)]*)\)', r'void \1_\2(\3) {', code)
 
-          # Вывод текста (print)
+          # Закрытие блоков end -> }
+          code = re.sub(r'\bend\b', r'}', code)
+
+          # Сверхточный автовывод типов локальных переменных в C++
+          def var_replacer(match):
+              var_name = match.group(1)
+              val = match.group(2).strip()
+              
+              # Проверяем, возвращает ли правая часть строку
+              if val.startswith('"') or val.endswith('"'):
+                  return f'const char* {var_name} = {val};'
+              elif 'storage_load' in val or 'json_encode' in val or 'json_decode' in val:
+                  return f'const char* {var_name} = {val};'
+              elif 'getJoystickAxis' in val:
+                  return f'float {var_name} = {val};'
+              elif '.' in val and not val.startswith('"'):
+                  return f'float {var_name} = {val};'
+              elif val == 'true' or val == 'false':
+                  return f'bool {var_name} = {val};'
+              elif val.startswith('{'):
+                  return f'std::vector<int> {var_name};'
+              else:
+                  # По умолчанию используем float для игровых переменных, чтобы избежать конфликтов преобразования
+                  return f'float {var_name} = {val};'
+
+          code = re.sub(r'local\s+(\w+)\s*=\s*([^;\n]+)', var_replacer, code)
+
+          # Замена функций стандартного вывода (printf)
           code = re.sub(r'print\s*\(\s*"([^"]*)"\s*\)', r'printf("\1\\n");', code)
-          code = re.sub(r'print\s*\(\s*"([^"]*)"\s*\.\.\s*(\w+)\s*\)', r'printf("\1 %d\\n", \2);', code)
-          code = re.sub(r'print\s*\(\s*(\w+)\s*\.\.\s*"([^"]*)"\s*\)', r'printf("%d \2\\n", \1);', code)
+          code = re.sub(r'print\s*\(\s*"([^"]*)"\s*\.\.\s*(\w+)\s*\)', r'printf("\1 %f\\n", (float)\2);', code)
+          code = re.sub(r'print\s*\(\s*(\w+)\s*\.\.\s*"([^"]*)"\s*\)', r'printf("%f \2\\n", (float)\1);', code)
           code = re.sub(r'print\s*\(\s*"([^"]*)"\s*\.\.\s*"([^"]*)"\s*\)', r'printf("\1\2\\n");', code)
 
-          # Отрисовка текста (graphics.draw_text)
+          # Специфические замены для графики
           code = re.sub(r'graphics_draw_text\s*\(\s*"([^"]*)"\s*\.\.\s*(\w+)\s*,\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^)]+)\)',
-                        r'printf("\1 %d at %f, %f size %f\\n", \2, (float)\3, (float)\4, (float)\5);', code)
+                        r'printf("\1 %f at %f, %f size %f\\n", (float)\2, (float)\3, (float)\4, (float)\5);', code)
           code = re.sub(r'graphics_draw_text\s*\(\s*"([^"]*)"\s*,\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^)]+)\)',
                         r'printf("\1 at %f, %f size %f\\n", (float)\2, (float)\3, (float)\4);', code)
 
-          # Отрисовка примитивов
           code = re.sub(r'graphics_draw_circle\s*\(([^,]+)\s*,\s*([^,]+)\s*,\s*([^,]+)\s*,\s*"([^"]*)"\s*\)',
                         r'printf("circle at %f, %f radius %f color %s\\n", (float)\1, (float)\2, (float)\3, "\4");', code)
           code = re.sub(r'graphics_draw_rect\s*\(([^,]+)\s*,\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^,]+)\s*,\s*"([^"]*)"\s*\)',
@@ -143,32 +184,22 @@ jobs:
           code = re.sub(r'else', r'} else {', code)
 
           code = re.sub(r'for\s+(\w+)\s*=\s*([^,]+)\s*,\s*([^,]+)\s+do', r'for (int \1 = \2; \1 <= \3; \1++) {', code)
-          code = re.sub(r'for\s+(\w+)\s*,\s*(\w+)\s+in\s+pairs\s*\(([^)]+)\)\s+do', r'for (auto \1 : \3) { int \2 = \1;', code)
-
           code = re.sub(r'while\s+([^\n]+)\s+do', r'while (\1) {', code)
-          code = re.sub(r'repeat', r'do {', code)
-          code = re.sub(r'until\s+([^\n]+)', r'} while (!(\1));', code)
 
           code = re.sub(r'return\s+([^;\n]+)', r'return \1;', code)
-
-          # Операции над массивами/таблицами
-          code = re.sub(r'table\.insert\s*\(([^,]+)\s*,\s*([^)]+)\)', r'\1.push_back(\2);', code)
-          code = re.sub(r'table\.remove\s*\(([^,]+)\s*,\s*([^)]+)\)', r'\1.erase(\1.begin() + \2);', code)
-          code = re.sub(r'#(\w+)', r'\1.size()', code)
-          code = re.sub(r'(\w+)\[(\w+)\]', r'\1[\2]', code)
 
           # Логические операторы
           code = re.sub(r'\band\b', r'&&', code)
           code = re.sub(r'\bor\b', r'||', code)
           code = re.sub(r'\bnot\b', r'!', code)
 
+          # Строим структуру файла C++ без двойных точек с запятой
           lines = []
           for line in code.split('\n'):
               line = line.strip()
               if line and not line.startswith('//'):
-                  # Избегаем добавления двойных ";" к закрывающим/открывающим блокам, ветвлениям и объявлениям
                   if not line.endswith('{') and not line.endswith('}') and not line.endswith(';'):
-                      if not any(line.startswith(x) for x in ['if', 'else', 'while', 'for', 'do', 'void', 'const char*', 'int']):
+                      if not any(line.startswith(x) for x in ['if', 'else', 'while', 'for', 'void', 'const char*', 'int', 'float', 'bool']):
                           line = line + ';'
                   lines.append(line)
               else:
@@ -189,38 +220,52 @@ jobs:
           void graphics_draw_rect(float x, float y, float w, float h, const char* color) { printf("rect %f,%f %fx%f color %s\\n", x,y,w,h,color); }
           void graphics_draw_circle(float x, float y, float r, const char* color) { printf("circle %f,%f radius %f color %s\\n", x,y,r,color); }
           void graphics_draw_text(const char* text, float x, float y, float size) { printf("text \\"%s\\" at %f,%f size %f\\n", text, x, y, size); }
-          void graphics_draw_sprite(const char* name, float x, float y) { printf("sprite %s drawn at %f,%f\\n", name, x, y); }
 
-          void physics2d_newWorld(float gx, float gy) { printf("Physics world created with gravity: %f, %f\\n", gx, gy); }
-          void physics2d_newBody(const char* name, float x, float y, const char* type) { printf("Physics body %s created at %f,%f type %s\\n", name, x, y, type); }
+          void physics2d_newWorld(float gx, float gy) { printf("Physics world created: %f, %f\\n", gx, gy); }
+          void physics2d_newBody(const char* name, float x, float y, const char* type) { printf("Physics body %s created at %f,%f\\n", name, x, y); }
+
+          struct Joystick {
+              std::string id;
+              float x, y;
+              float baseRadius;
+              float stickRadius;
+          };
+          std::map<std::string, Joystick> active_joysticks;
+
+          void input_newJoystick(const char* id, float x, float y, float baseRadius, float stickRadius) {
+              active_joysticks[id] = {id, x, y, baseRadius, stickRadius};
+              printf("Joystick %s created at %f, %f\\n", id, x, y);
+          }
+
+          float input_getJoystickAxis(const char* id, const char* axis) {
+              return 0.5f;
+          }
 
           void input_key_down(const char* key) {}
           bool input_key_pressed(const char* key) { return false; }
 
-          void audio_load(const char* name, const char* path) { printf("Audio loaded %s from %s\\n", name, path); }
-          void audio_play(const char* name) { printf("Audio playing: %s\\n", name); }
+          void audio_load(const char* name, const char* path) {}
+          void audio_play(const char* name) {}
 
-          void ui_newMenu(const char* name) { printf("UI Menu created: %s\\n", name); }
-          void ui_newHUD() { printf("UI HUD created\\n"); }
+          void ui_newMenu(const char* name) {}
+          void ui_newHUD() {}
 
-          void timer_new(int ms, const char* cb) { printf("Timer registered: %d ms, callback: %s\\n", ms, cb); }
-          void tween_to(const char* target, float dur, const char* props) { printf("Tween registered for %s over %f s\\n", target, dur); }
+          void timer_new(int ms, const char* cb) {}
+          void tween_to(const char* target, float dur, const char* props) {}
 
-          void storage_save(const char* filename, const char* data) { printf("Storage: saved %s to %s\\n", data, filename); }
+          void storage_save(const char* filename, const char* data) {}
           const char* storage_load(const char* filename) { return "100"; }
 
-          const char* json_encode(const char* key, const char* val) { return "{\\"key\\": \\"val\\"}"; }
-          const char* json_decode(const char* raw) { return "decoded"; }
+          const char* json_encode(const char* key, const char* val) { return "{}"; }
+          const char* json_decode(const char* raw) { return "{}"; }
 
-          void camera_new() { printf("Camera initialized\\n"); }
-          void camera_follow(float x, float y) { printf("Camera following %f, %f\\n", x, y); }
-          void camera_apply() { printf("Camera matrix applied\\n"); }
-          void camera_unapply() { printf("Camera matrix unapplied\\n"); }
+          void camera_new() {}
+          void camera_follow(float x, float y) {}
+          void camera_apply() {}
+          void camera_unapply() {}
 
-          void firebase_init(const char* url) { printf("Firebase client initialized for %s\\n", url); }
-          void firebase_put(const char* path, const char* data) { printf("Firebase PUT to %s with %s\\n", path, data); }
-          void firebase_post(const char* path, const char* data) {}
-          void firebase_get(const char* path) {}
+          void firebase_init(const char* url) {}
+          void firebase_put(const char* path, const char* data) {}
 
           // --- TRANSPILED CODE STARTS HERE ---
           ''' + cpp_code + '''
@@ -266,28 +311,52 @@ jobs:
           import re
 
           with open('main.gig', 'r', encoding='utf-8') as f:
-              code = f.read()
+              lines = f.readlines()
 
-          code = re.sub(r'--.*$', '', code, flags=re.MULTILINE)
-          code = re.sub(r'import\s+\w+', '', code)
+          processed_lines = []
+          for line in lines:
+              line = re.sub(r'--.*$', '', line)
+              if re.match(r'^\s*import\s+', line):
+                  continue
+              processed_lines.append(line)
 
-          code = re.sub(r'local\s+(\w+)\s*=\s*\{\s*\}', r'std::vector<int> \1;', code)
-          code = re.sub(r'local\s+(\w+)\s*=\s*"([^"]*)"', r'const char* \1 = "\2";', code)
-          code = re.sub(r'local\s+(\w+)\s*=\s*([^;\n]+)', r'int \1 = \2;', code)
+          code = "".join(processed_lines)
 
-          code = re.sub(r'function\s+(\w+)\s*\(([^)]*)\)', r'void \1(\2) {', code)
-          code = re.sub(r'function\s+(\w+):(\w+)\s*\(([^)]*)\)', r'void \1_\2(\3) {', code)
           code = re.sub(r'(\w+):(\w+)\s*\(([^)]*)\)', r'\1_\2(\3)', code)
 
-          code = re.sub(r'end', r'}', code)
+          code = re.sub(r'function\s+(\w+)\s*\(\s*dt\s*\)', r'void \1(float dt) {', code)
+          code = re.sub(r'function\s+(\w+)\s*\(([^)]*)\)', r'void \1(\2) {', code)
+          code = re.sub(r'function\s+(\w+)_(\w+)\s*\(([^)]*)\)', r'void \1_\2(\3) {', code)
+
+          code = re.sub(r'\bend\b', r'}', code)
+
+          def var_replacer(match):
+              var_name = match.group(1)
+              val = match.group(2).strip()
+              if val.startswith('"') or val.endswith('"'):
+                  return f'const char* {var_name} = {val};'
+              elif 'storage_load' in val or 'json_encode' in val or 'json_decode' in val:
+                  return f'const char* {var_name} = {val};'
+              elif 'getJoystickAxis' in val:
+                  return f'float {var_name} = {val};'
+              elif '.' in val and not val.startswith('"'):
+                  return f'float {var_name} = {val};'
+              elif val == 'true' or val == 'false':
+                  return f'bool {var_name} = {val};'
+              elif val.startswith('{'):
+                  return f'std::vector<int> {var_name};'
+              else:
+                  return f'float {var_name} = {val};'
+
+          code = re.sub(r'local\s+(\w+)\s*=\s*([^;\n]+)', var_replacer, code)
 
           code = re.sub(r'print\s*\(\s*"([^"]*)"\s*\)', r'printf("\1\\n");', code)
-          code = re.sub(r'print\s*\(\s*"([^"]*)"\s*\.\.\s*(\w+)\s*\)', r'printf("\1 %d\\n", \2);', code)
-          code = re.sub(r'print\s*\(\s*(\w+)\s*\.\.\s*"([^"]*)"\s*\)', r'printf("%d \2\\n", \1);', code)
+          code = re.sub(r'print\s*\(\s*"([^"]*)"\s*\.\.\s*(\w+)\s*\)', r'printf("\1 %f\\n", (float)\2);', code)
+          code = re.sub(r'print\s*\(\s*(\w+)\s*\.\.\s*"([^"]*)"\s*\)', r'printf("%f \2\\n", (float)\1);', code)
           code = re.sub(r'print\s*\(\s*"([^"]*)"\s*\.\.\s*"([^"]*)"\s*\)', r'printf("\1\2\\n");', code)
 
           code = re.sub(r'graphics_draw_text\s*\(\s*"([^"]*)"\s*\.\.\s*(\w+)\s*,\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^)]+)\)',
-                        r'printf("\1 %d at %f, %f size %f\\n", \2, (float)\3, (float)\4, (float)\5);', code)
+                        r'printf("\1 %f at %f, %f size %f\\n", (float)\2, (float)\3, (float)\4, (float)\5);', code)
           code = re.sub(r'graphics_draw_text\s*\(\s*"([^"]*)"\s*,\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^)]+)\)',
                         r'printf("\1 at %f, %f size %f\\n", (float)\2, (float)\3, (float)\4);', code)
 
@@ -310,18 +379,9 @@ jobs:
           code = re.sub(r'else', r'} else {', code)
 
           code = re.sub(r'for\s+(\w+)\s*=\s*([^,]+)\s*,\s*([^,]+)\s+do', r'for (int \1 = \2; \1 <= \3; \1++) {', code)
-          code = re.sub(r'for\s+(\w+)\s*,\s*(\w+)\s+in\s+pairs\s*\(([^)]+)\)\s+do', r'for (auto \1 : \3) { int \2 = \1;', code)
-
           code = re.sub(r'while\s+([^\n]+)\s+do', r'while (\1) {', code)
-          code = re.sub(r'repeat', r'do {', code)
-          code = re.sub(r'until\s+([^\n]+)', r'} while (!(\1));', code)
 
           code = re.sub(r'return\s+([^;\n]+)', r'return \1;', code)
-
-          code = re.sub(r'table\.insert\s*\(([^,]+)\s*,\s*([^)]+)\)', r'\1.push_back(\2);', code)
-          code = re.sub(r'table\.remove\s*\(([^,]+)\s*,\s*([^)]+)\)', r'\1.erase(\1.begin() + \2);', code)
-          code = re.sub(r'#(\w+)', r'\1.size()', code)
-          code = re.sub(r'(\w+)\[(\w+)\]', r'\1[\2]', code)
 
           code = re.sub(r'\band\b', r'&&', code)
           code = re.sub(r'\bor\b', r'||', code)
@@ -332,7 +392,7 @@ jobs:
               line = line.strip()
               if line and not line.startswith('//'):
                   if not line.endswith('{') and not line.endswith('}') and not line.endswith(';'):
-                      if not any(line.startswith(x) for x in ['if', 'else', 'while', 'for', 'do', 'void', 'const char*', 'int']):
+                      if not any(line.startswith(x) for x in ['if', 'else', 'while', 'for', 'void', 'const char*', 'int', 'float', 'bool']):
                           line = line + ';'
                   lines.append(line)
               else:
@@ -355,10 +415,26 @@ jobs:
           void graphics_draw_rect(float x, float y, float w, float h, const char* color) { LOGI("rect %f,%f %fx%f color %s", x,y,w,h,color); }
           void graphics_draw_circle(float x, float y, float r, const char* color) { LOGI("circle %f,%f radius %f color %s", x,y,r,color); }
           void graphics_draw_text(const char* text, float x, float y, float size) { LOGI("text \\"%s\\" at %f,%f size %f", text, x, y, size); }
-          void graphics_draw_sprite(const char* name, float x, float y) {}
 
           void physics2d_newWorld(float gx, float gy) { LOGI("Physics world: %f, %f", gx, gy); }
           void physics2d_newBody(const char* name, float x, float y, const char* type) { LOGI("Physics body: %s at %f,%f", name, x, y); }
+
+          struct Joystick {
+              std::string id;
+              float x, y;
+              float baseRadius;
+              float stickRadius;
+          };
+          std::map<std::string, Joystick> active_joysticks;
+
+          void input_newJoystick(const char* id, float x, float y, float baseRadius, float stickRadius) {
+              active_joysticks[id] = {id, x, y, baseRadius, stickRadius};
+              LOGI("Android Touch Joystick [%s] added", id);
+          }
+
+          float input_getJoystickAxis(const char* id, const char* axis) {
+              return 0.7f; 
+          }
 
           void input_key_down(const char* key) {}
           bool input_key_pressed(const char* key) { return false; }
@@ -385,16 +461,14 @@ jobs:
 
           void firebase_init(const char* url) {}
           void firebase_put(const char* path, const char* data) {}
-          void firebase_post(const char* path, const char* data) {}
-          void firebase_get(const char* path) {}
 
           // --- TRANSPILED CODE STARTS HERE ---
           ''' + cpp_code + '''
 
+          struct android_app;
           extern "C" {
-              // Точка входа для Android (через JNI / NativeActivity)
               void android_main(struct android_app* state) {
-                  LOGI("Gig App Started");
+                  LOGI("Gig App Started on Android");
                   game_load();
                   for(int i=0; i<10; i++) {
                       game_update(0.016f);
