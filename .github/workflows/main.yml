@@ -529,8 +529,8 @@ jobs:
           # 3. Генерация самоподписанного сертификата
           keytool -genkeypair -v -keystore release.keystore -alias gig_key -keyalg RSA -keysize 2048 -validity 10000 -storepass "android" -keypass "android" -dname "CN=Androbiome, O=Gig, C=RU"
 
-          # 4. Подпись APK с исправленным синтаксисом параметров (--ks вместо --keystore)
-          $BUILD_TOOLS/apksigner sign --ks release.keystore --storepass "android" --keypass "android" --out GigFlow.apk aligned.apk
+          # 4. Подпись APK с использованием параметров SDK 34 (--ks-pass вместо --storepass)
+          $BUILD_TOOLS/apksigner sign --ks release.keystore --ks-pass pass:"android" --out GigFlow.apk aligned.apk
 
           # 5. Верификация
           $BUILD_TOOLS/apksigner verify GigFlow.apk
