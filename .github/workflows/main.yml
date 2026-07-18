@@ -1,4 +1,4 @@
-name: GigLang Full Compiler
+name: GigLang Real Build
 
 on:
   push:
@@ -6,463 +6,231 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-giglang:
-    runs-on: ubuntu-latest
-    
+  # ============================================================
+  #  WINDOWS (x86_64)
+  # ============================================================
+  build-windows:
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y nasm qemu-user-static
-          
-      - name: Create GigLang compiler
-        shell: bash
-        run: |
-          cat << 'EOF' > gigc
-          #!/bin/bash
-          # ============================================================
-          #  GIGLANG COMPILER - ПОЛНЫЙ ЯЗЫК БЕЗ GC
-          # ============================================================
-          
-          INPUT="main.gig"
-          OUTPUT="program"
-          ASM_FILE="program.asm"
-          
-          echo "🔧 GigLang Compiler v1.0"
-          echo "📖 Compiling: $INPUT"
-          
-          # ============================================================
-          #  ПЕРЕМЕННЫЕ
-          # ============================================================
-          declare -A variables
-          declare -A strings
-          declare -A functions
-          declare -A structs
-          declare -A arrays
-          
-          var_count=0
-          string_count=0
-          func_count=0
-          struct_count=0
-          label_count=0
-          
-          # ============================================================
-          #  ГЕНЕРАЦИЯ КОДА
-          # ============================================================
-          generate_label() {
-              echo "label_$((label_count++))"
-          }
-          
-          # ============================================================
-          #  ПАРСИНГ
-          # ============================================================
-          echo "section .data" > $ASM_FILE
-          echo "    newline db 10, 0" >> $ASM_FILE
-          echo "    fmt_int db '%d', 10, 0" >> $ASM_FILE
-          echo "    fmt_str db '%s', 10, 0" >> $ASM_FILE
-          echo "" >> $ASM_FILE
-          
-          echo "section .bss" >> $ASM_FILE
-          
-          # Сначала собираем все переменные
-          temp_vars=$(mktemp)
-          grep -E '^[[:space:]]*let[[:space:]]+[a-zA-Z_][a-zA-Z0-9_]*[[:space:]]*=' "$INPUT" | while read -r line; do
-              var_name=$(echo "$line" | sed -E 's/let[[:space:]]+([a-zA-Z_][a-zA-Z0-9_]*)[[:space:]]*=.*/\1/')
-              echo "    ${var_name}: resd 1" >> $ASM_FILE
-          done
-          
-          # Строки
-          grep -E 'print[[:space:]]*\([[:space:]]*\"' "$INPUT" | while read -r line; do
-              string=$(echo "$line" | sed -E 's/.*print[[:space:]]*\([[:space:]]*\"([^\"]+)\"[[:space:]]*\)[[:space:]]*;.*/\1/')
-              echo "    str_${string_count}: db '${string}', 0" >> $ASM_FILE
-              string_count=$((string_count + 1))
-          done
-          
-          echo "" >> $ASM_FILE
-          echo "section .text" >> $ASM_FILE
-          echo "    global _start" >> $ASM_FILE
-          echo "    extern printf, malloc, free, exit" >> $ASM_FILE
-          echo "" >> $ASM_FILE
-          echo "_start:" >> $ASM_FILE
-          echo "    call main" >> $ASM_FILE
-          echo "    mov rdi, rax" >> $ASM_FILE
-          echo "    call exit" >> $ASM_FILE
-          echo "" >> $ASM_FILE
-          
-          # ============================================================
-          #  ФУНКЦИИ
-          # ============================================================
-          # Находим все функции
-          in_function=0
-          current_func=""
-          func_body=""
-          
-          while IFS= read -r line; do
-              # Удаляем пробелы
-              trimmed=$(echo "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-              
-              # Пропускаем пустые
-              if [ -z "$trimmed" ]; then
-                  continue
-              fi
-              
-              # === ФУНКЦИИ ===
-              if [[ "$trimmed" =~ ^func[[:space:]]+([a-zA-Z_][a-zA-Z0-9_]*)[[:space:]]*\(([^)]*)\)[[:space:]]*{ ]]; then
-                  if [ $in_function -eq 1 ]; then
-                      echo "    ret" >> $ASM_FILE
-                  fi
-                  func_name="${BASH_REMATCH[1]}"
-                  params="${BASH_REMATCH[2]}"
-                  in_function=1
-                  current_func="$func_name"
-                  
-                  echo "${func_name}:" >> $ASM_FILE
-                  echo "    push rbp" >> $ASM_FILE
-                  echo "    mov rbp, rsp" >> $ASM_FILE
-                  
-                  # Параметры
-                  if [ -n "$params" ]; then
-                      param_count=0
-                      IFS=',' read -ra PARAMS <<< "$params"
-                      for param in "${PARAMS[@]}"; do
-                          param_name=$(echo "$param" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-                          echo "    mov [${param_name}], rdi" >> $ASM_FILE
-                          param_count=$((param_count + 1))
-                      done
-                  fi
-                  
-              # === ВОЗВРАТ ===
-              elif [[ "$trimmed" =~ ^return[[:space:]]+([^;]+)[[:space:]]*; ]]; then
-                  value="${BASH_REMATCH[1]}"
-                  if [[ "$value" =~ ^[0-9]+$ ]]; then
-                      echo "    mov rax, $value" >> $ASM_FILE
-                  elif [[ "$value" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]]; then
-                      echo "    mov rax, [${value}]" >> $ASM_FILE
-                  fi
-                  echo "    pop rbp" >> $ASM_FILE
-                  echo "    ret" >> $ASM_FILE
-                  in_function=0
-                  
-              # === ЗАКРЫТИЕ ФУНКЦИИ ===
-              elif [[ "$trimmed" == "}" ]] && [ $in_function -eq 1 ]; then
-                  echo "    pop rbp" >> $ASM_FILE
-                  echo "    ret" >> $ASM_FILE
-                  in_function=0
-                  
-              # === ВНУТРИ ФУНКЦИИ ===
-              elif [ $in_function -eq 1 ]; then
-                  # === ПЕРЕМЕННЫЕ ===
-                  if [[ "$trimmed" =~ ^let[[:space:]]+([a-zA-Z_][a-zA-Z0-9_]*)[[:space:]]*=[[:space:]]*([^;]+)[[:space:]]*; ]]; then
-                      var_name="${BASH_REMATCH[1]}"
-                      value="${BASH_REMATCH[2]}"
-                      if [[ "$value" =~ ^[0-9]+$ ]]; then
-                          echo "    mov qword [${var_name}], $value" >> $ASM_FILE
-                      else
-                          echo "    mov rax, [${value}]" >> $ASM_FILE
-                          echo "    mov [${var_name}], rax" >> $ASM_FILE
-                      fi
-                      
-                  # === ПЕЧАТЬ ===
-                  elif [[ "$trimmed" =~ ^print[[:space:]]*\([[:space:]]*\"([^\"]+)\"[[:space:]]*\)[[:space:]]*; ]]; then
-                      string="${BASH_REMATCH[1]}"
-                      echo "    mov rdi, fmt_str" >> $ASM_FILE
-                      echo "    mov rsi, str_${string_count}" >> $ASM_FILE
-                      echo "    call printf" >> $ASM_FILE
-                      string_count=$((string_count + 1))
-                      
-                  elif [[ "$trimmed" =~ ^print[[:space:]]*\([[:space:]]*([a-zA-Z_][a-zA-Z0-9_]*)[[:space:]]*\)[[:space:]]*; ]]; then
-                      var_name="${BASH_REMATCH[1]}"
-                      echo "    mov rdi, fmt_int" >> $ASM_FILE
-                      echo "    mov rsi, [${var_name}]" >> $ASM_FILE
-                      echo "    call printf" >> $ASM_FILE
-                      
-                  # === УСЛОВИЯ ===
-                  elif [[ "$trimmed" =~ ^if[[:space:]]+([a-zA-Z_][a-zA-Z0-9_]*)[[:space:]]*([><=!]+)[[:space:]]*([^ {]+)[[:space:]]*{ ]]; then
-                      var_name="${BASH_REMATCH[1]}"
-                      op="${BASH_REMATCH[2]}"
-                      value="${BASH_REMATCH[3]}"
-                      label_else=$(generate_label)
-                      label_end=$(generate_label)
-                      
-                      echo "    mov rax, [${var_name}]" >> $ASM_FILE
-                      if [[ "$value" =~ ^[0-9]+$ ]]; then
-                          echo "    cmp rax, $value" >> $ASM_FILE
-                      else
-                          echo "    cmp rax, [${value}]" >> $ASM_FILE
-                      fi
-                      
-                      case "$op" in
-                          "==") echo "    jne $label_else" >> $ASM_FILE ;;
-                          "!=") echo "    je $label_else" >> $ASM_FILE ;;
-                          ">")  echo "    jle $label_else" >> $ASM_FILE ;;
-                          ">=") echo "    jl $label_else" >> $ASM_FILE ;;
-                          "<")  echo "    jge $label_else" >> $ASM_FILE ;;
-                          "<=") echo "    jg $label_else" >> $ASM_FILE ;;
-                      esac
-                      
-                  # === ЗАКРЫТИЕ УСЛОВИЯ ===
-                  elif [[ "$trimmed" == "}" ]]; then
-                      echo "$label_else:" >> $ASM_FILE
-                      echo "$label_end:" >> $ASM_FILE
-                      
-                  # === ЦИКЛЫ ===
-                  elif [[ "$trimmed" =~ ^for[[:space:]]+([a-zA-Z_][a-zA-Z0-9_]*)[[:space:]]*=[[:space:]]*([^;]+)[[:space:]]*;[[:space:]]*\1[[:space:]]*([><=!]+)[[:space:]]*([^;]+)[[:space:]]*;[[:space:]]*\1[[:space:]]*=[[:space:]]*\1[[:space:]]*([+\-])[[:space:]]*([0-9]+)[[:space:]]*{ ]]; then
-                      var_name="${BASH_REMATCH[1]}"
-                      start="${BASH_REMATCH[2]}"
-                      op="${BASH_REMATCH[3]}"
-                      end="${BASH_REMATCH[4]}"
-                      step_op="${BASH_REMATCH[5]}"
-                      step="${BASH_REMATCH[6]}"
-                      label_start=$(generate_label)
-                      label_end=$(generate_label)
-                      
-                      if [[ "$start" =~ ^[0-9]+$ ]]; then
-                          echo "    mov qword [${var_name}], $start" >> $ASM_FILE
-                      else
-                          echo "    mov rax, [${start}]" >> $ASM_FILE
-                          echo "    mov [${var_name}], rax" >> $ASM_FILE
-                      fi
-                      
-                      echo "$label_start:" >> $ASM_FILE
-                      echo "    mov rax, [${var_name}]" >> $ASM_FILE
-                      if [[ "$end" =~ ^[0-9]+$ ]]; then
-                          echo "    cmp rax, $end" >> $ASM_FILE
-                      else
-                          echo "    cmp rax, [${end}]" >> $ASM_FILE
-                      fi
-                      
-                      case "$op" in
-                          "==") echo "    jne $label_end" >> $ASM_FILE ;;
-                          "!=") echo "    je $label_end" >> $ASM_FILE ;;
-                          ">")  echo "    jge $label_end" >> $ASM_FILE ;;
-                          ">=") echo "    jg $label_end" >> $ASM_FILE ;;
-                          "<")  echo "    jge $label_end" >> $ASM_FILE ;;
-                          "<=") echo "    jg $label_end" >> $ASM_FILE ;;
-                      esac
-                      
-                  # === ИНКРЕМЕНТ В ЦИКЛЕ ===
-                  elif [[ "$trimmed" =~ ^[[:space:]]*\} ]]; then
-                      echo "    mov rax, [${var_name}]" >> $ASM_FILE
-                      echo "    add rax, $step" >> $ASM_FILE
-                      echo "    mov [${var_name}], rax" >> $ASM_FILE
-                      echo "    jmp $label_start" >> $ASM_FILE
-                      echo "$label_end:" >> $ASM_FILE
-                  fi
-              fi
-          done < "$INPUT"
-          
-          # Если мы были внутри функции, закрываем её
-          if [ $in_function -eq 1 ]; then
-              echo "    pop rbp" >> $ASM_FILE
-              echo "    ret" >> $ASM_FILE
-          fi
-          
-          # === ГЛАВНАЯ ФУНКЦИЯ ===
-          echo "" >> $ASM_FILE
-          echo "main:" >> $ASM_FILE
-          echo "    push rbp" >> $ASM_FILE
-          echo "    mov rbp, rsp" >> $ASM_FILE
-          
-          # Снова проходим по файлу для основного кода
-          while IFS= read -r line; do
-              trimmed=$(echo "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-              
-              if [ -z "$trimmed" ]; then
-                  continue
-              fi
-              
-              # === ПЕРЕМЕННЫЕ ===
-              if [[ "$trimmed" =~ ^let[[:space:]]+([a-zA-Z_][a-zA-Z0-9_]*)[[:space:]]*=[[:space:]]*([^;]+)[[:space:]]*; ]]; then
-                  var_name="${BASH_REMATCH[1]}"
-                  value="${BASH_REMATCH[2]}"
-                  if [[ "$value" =~ ^[0-9]+$ ]]; then
-                      echo "    mov qword [${var_name}], $value" >> $ASM_FILE
-                  else
-                      echo "    mov rax, [${value}]" >> $ASM_FILE
-                      echo "    mov [${var_name}], rax" >> $ASM_FILE
-                  fi
-                  
-              # === ПЕЧАТЬ ===
-              elif [[ "$trimmed" =~ ^print[[:space:]]*\([[:space:]]*\"([^\"]+)\"[[:space:]]*\)[[:space:]]*; ]]; then
-                  string="${BASH_REMATCH[1]}"
-                  echo "    mov rdi, fmt_str" >> $ASM_FILE
-                  echo "    mov rsi, str_$((string_count))" >> $ASM_FILE
-                  echo "    call printf" >> $ASM_FILE
-                  
-              elif [[ "$trimmed" =~ ^print[[:space:]]*\([[:space:]]*([a-zA-Z_][a-zA-Z0-9_]*)[[:space:]]*\)[[:space:]]*; ]]; then
-                  var_name="${BASH_REMATCH[1]}"
-                  echo "    mov rdi, fmt_int" >> $ASM_FILE
-                  echo "    mov rsi, [${var_name}]" >> $ASM_FILE
-                  echo "    call printf" >> $ASM_FILE
-                  
-              # === УСЛОВИЯ ===
-              elif [[ "$trimmed" =~ ^if[[:space:]]+([a-zA-Z_][a-zA-Z0-9_]*)[[:space:]]*([><=!]+)[[:space:]]*([^ {]+)[[:space:]]*{ ]]; then
-                  var_name="${BASH_REMATCH[1]}"
-                  op="${BASH_REMATCH[2]}"
-                  value="${BASH_REMATCH[3]}"
-                  label_else=$(generate_label)
-                  label_end=$(generate_label)
-                  
-                  echo "    mov rax, [${var_name}]" >> $ASM_FILE
-                  if [[ "$value" =~ ^[0-9]+$ ]]; then
-                      echo "    cmp rax, $value" >> $ASM_FILE
-                  else
-                      echo "    cmp rax, [${value}]" >> $ASM_FILE
-                  fi
-                  
-                  case "$op" in
-                      "==") echo "    jne $label_else" >> $ASM_FILE ;;
-                      "!=") echo "    je $label_else" >> $ASM_FILE ;;
-                      ">")  echo "    jle $label_else" >> $ASM_FILE ;;
-                      ">=") echo "    jl $label_else" >> $ASM_FILE ;;
-                      "<")  echo "    jge $label_else" >> $ASM_FILE ;;
-                      "<=") echo "    jg $label_else" >> $ASM_FILE ;;
-                  esac
-                  
-              # === ЗАКРЫТИЕ УСЛОВИЯ ===
-              elif [[ "$trimmed" == "}" ]]; then
-                  echo "$label_else:" >> $ASM_FILE
-                  echo "$label_end:" >> $ASM_FILE
-                  
-              # === ЦИКЛЫ ===
-              elif [[ "$trimmed" =~ ^for[[:space:]]+([a-zA-Z_][a-zA-Z0-9_]*)[[:space:]]*=[[:space:]]*([^;]+)[[:space:]]*;[[:space:]]*\1[[:space:]]*([><=!]+)[[:space:]]*([^;]+)[[:space:]]*;[[:space:]]*\1[[:space:]]*=[[:space:]]*\1[[:space:]]*([+\-])[[:space:]]*([0-9]+)[[:space:]]*{ ]]; then
-                  var_name="${BASH_REMATCH[1]}"
-                  start="${BASH_REMATCH[2]}"
-                  op="${BASH_REMATCH[3]}"
-                  end="${BASH_REMATCH[4]}"
-                  step_op="${BASH_REMATCH[5]}"
-                  step="${BASH_REMATCH[6]}"
-                  label_start=$(generate_label)
-                  label_end=$(generate_label)
-                  
-                  if [[ "$start" =~ ^[0-9]+$ ]]; then
-                      echo "    mov qword [${var_name}], $start" >> $ASM_FILE
-                  else
-                      echo "    mov rax, [${start}]" >> $ASM_FILE
-                      echo "    mov [${var_name}], rax" >> $ASM_FILE
-                  fi
-                  
-                  echo "$label_start:" >> $ASM_FILE
-                  echo "    mov rax, [${var_name}]" >> $ASM_FILE
-                  if [[ "$end" =~ ^[0-9]+$ ]]; then
-                      echo "    cmp rax, $end" >> $ASM_FILE
-                  else
-                      echo "    cmp rax, [${end}]" >> $ASM_FILE
-                  fi
-                  
-                  case "$op" in
-                      "==") echo "    jne $label_end" >> $ASM_FILE ;;
-                      "!=") echo "    je $label_end" >> $ASM_FILE ;;
-                      ">")  echo "    jge $label_end" >> $ASM_FILE ;;
-                      ">=") echo "    jg $label_end" >> $ASM_FILE ;;
-                      "<")  echo "    jge $label_end" >> $ASM_FILE ;;
-                      "<=") echo "    jg $label_end" >> $ASM_FILE ;;
-                  esac
-                  
-                  # Тело цикла будет дальше
-                  in_loop=1
-                  
-              # === ЗАКРЫТИЕ ЦИКЛА ===
-              elif [[ "$trimmed" == "}" ]] && [ $in_loop -eq 1 ]; then
-                  echo "    mov rax, [${var_name}]" >> $ASM_FILE
-                  echo "    add rax, $step" >> $ASM_FILE
-                  echo "    mov [${var_name}], rax" >> $ASM_FILE
-                  echo "    jmp $label_start" >> $ASM_FILE
-                  echo "$label_end:" >> $ASM_FILE
-                  in_loop=0
-              fi
-          done < "$INPUT"
-          
-          echo "    pop rbp" >> $ASM_FILE
-          echo "    ret" >> $ASM_FILE
-          
-          echo "✅ Compilation complete!"
-          
-          # ============================================================
-          #  АССЕМБЛИРОВАНИЕ
-          # ============================================================
-          echo "📦 Assembling..."
-          nasm -f elf64 $ASM_FILE -o program.o
-          
-          echo "🔗 Linking..."
-          gcc -no-pie program.o -o $OUTPUT -lc
-          
-          echo "✅ Done!"
-          echo "🚀 Run with: ./$OUTPUT"
-          EOF
-          
-          chmod +x gigc
-          
-      - name: Create test program
+      - name: Install NASM
+        run: choco install nasm -y
+      - name: Build GigLang
         shell: bash
         run: |
           cat << 'EOF' > main.gig
-          // ============================================
-          //  GIGLANG TEST PROGRAM - БЕЗ GC!
-          // ============================================
-          
-          let x = 10;
-          let y = 20;
-          let z = x + y;
-          print("Hello from GigLang!");
-          print("x = ");
-          print(x);
-          print("y = ");
-          print(y);
-          print("z = x + y = ");
-          print(z);
-          
-          // === УСЛОВИЯ ===
-          print("");
-          print("=== CONDITIONS ===");
-          if z > 25 {
-              print("z is greater than 25!");
-          } else {
-              print("z is not greater than 25");
-          }
-          
-          // === ЦИКЛЫ ===
-          print("");
-          print("=== LOOP ===");
-          let sum = 0;
-          for i = 0; i < 5; i = i + 1 {
-              sum = sum + i;
-              print("i = ");
-              print(i);
-              print("sum = ");
-              print(sum);
-          }
-          
-          // === ФУНКЦИИ ===
-          print("");
-          print("=== FUNCTIONS ===");
-          print("Calling add(5, 3)...");
-          
-          func add(a, b) {
-              let result = a + b;
-              return result;
-          }
-          
-          let result = add(5, 3);
-          print("Result: ");
-          print(result);
-          
-          print("");
-          print("✅ Program finished!");
+          let x = 10
+          let y = 20
+          let z = x + y
+          print("Hello from Windows!")
+          print("x = ")
+          print(x)
+          print("y = ")
+          print(y)
+          print("z = ")
+          print(z)
           EOF
-          
-      - name: Compile and Run
-        shell: bash
-        run: |
-          ./gigc
-          echo ""
-          echo "==================== OUTPUT ===================="
-          ./program
-          
-      - name: Upload binary
+          nasm -f win64 program.asm -o program.obj
+          gcc -no-pie program.obj -o GigLang.exe -lc
+      - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: GigLang-Program
-          path: program
+          name: GigLang-Windows
+          path: GigLang.exe
+
+  # ============================================================
+  #  LINUX (x86_64)
+  # ============================================================
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install
+        run: sudo apt-get install -y nasm gcc
+      - name: Build
+        shell: bash
+        run: |
+          cat << 'EOF' > main.gig
+          let x = 10
+          let y = 20
+          let z = x + y
+          print("Hello from Linux!")
+          EOF
+          nasm -f elf64 program.asm -o program.o
+          gcc -no-pie program.o -o GigLang -lc
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: GigLang-Linux
+          path: GigLang
+
+  # ============================================================
+  #  macOS (Intel + Apple Silicon)
+  # ============================================================
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install
+        run: brew install nasm gcc
+      - name: Build
+        shell: bash
+        run: |
+          cat << 'EOF' > main.gig
+          let x = 10
+          let y = 20
+          let z = x + y
+          print("Hello from macOS!")
+          EOF
+          nasm -f macho64 program.asm -o program.o
+          gcc -no-pie program.o -o GigLang -lc
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: GigLang-macOS
+          path: GigLang
+
+  # ============================================================
+  #  ANDROID ARMv7 (32-bit)
+  # ============================================================
+  build-android-armv7:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Java + SDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+      - name: Install NDK
+        run: |
+          yes | sdkmanager --licenses
+          sdkmanager "ndk;26.3.11579264" "build-tools;34.0.0"
+      - name: Build
+        shell: bash
+        run: |
+          cat << 'EOF' > main.gig
+          let x = 10
+          let y = 20
+          let z = x + y
+          print("Hello from Android!")
+          EOF
+          arm-linux-gnueabihf-gcc -static -march=armv7-a program.s -o GigLang_Android_ARMv7 -lc
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: GigLang-Android-ARMv7
+          path: GigLang_Android_ARMv7
+
+  # ============================================================
+  #  ANDROID ARM64 (64-bit)
+  # ============================================================
+  build-android-arm64:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Java + SDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+      - name: Install NDK
+        run: |
+          yes | sdkmanager --licenses
+          sdkmanager "ndk;26.3.11579264" "build-tools;34.0.0"
+      - name: Build
+        shell: bash
+        run: |
+          cat << 'EOF' > main.gig
+          let x = 10
+          let y = 20
+          let z = x + y
+          print("Hello from Android 64-bit!")
+          EOF
+          aarch64-linux-gnu-gcc -static program.s -o GigLang_Android_ARM64 -lc
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: GigLang-Android-ARM64
+          path: GigLang_Android_ARM64
+
+  # ============================================================
+  #  AURORA OS (ARMv7)
+  # ============================================================
+  build-aurora:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install
+        run: sudo apt-get install -y gcc-arm-linux-gnueabihf
+      - name: Build
+        shell: bash
+        run: |
+          cat << 'EOF' > main.gig
+          let x = 10
+          let y = 20
+          let z = x + y
+          print("Hello from Aurora OS!")
+          EOF
+          arm-linux-gnueabihf-gcc -static program.s -o GigLang_Aurora -lc
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: GigLang-Aurora
+          path: GigLang_Aurora
+
+  # ============================================================
+  #  PYCRASH (ARMv7)
+  # ============================================================
+  build-pycrash:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install
+        run: sudo apt-get install -y gcc-arm-linux-gnueabihf
+      - name: Build
+        shell: bash
+        run: |
+          cat << 'EOF' > main.gig
+          let x = 10
+          let y = 20
+          let z = x + y
+          print("Hello from PyCrash!")
+          EOF
+          arm-linux-gnueabihf-gcc -static program.s -o GigLang_PyCrash -lc
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: GigLang-PyCrash
+          path: GigLang_PyCrash
+
+  # ============================================================
+  #  УНИВЕРСАЛЬНЫЙ ПАКЕТ
+  # ============================================================
+  create-release:
+    needs: [build-windows, build-linux, build-macos, build-android-armv7, build-android-arm64, build-aurora, build-pycrash]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Package
+        run: |
+          mkdir GigLang
+          cp artifacts/GigLang-Windows/GigLang.exe GigLang/
+          cp artifacts/GigLang-Linux/GigLang GigLang/
+          cp artifacts/GigLang-macOS/GigLang GigLang/GigLang-macOS
+          cp artifacts/GigLang-Android-ARMv7/GigLang_Android_ARMv7 GigLang/
+          cp artifacts/GigLang-Android-ARM64/GigLang_Android_ARM64 GigLang/
+          cp artifacts/GigLang-Aurora/GigLang_Aurora GigLang/
+          cp artifacts/GigLang-PyCrash/GigLang_PyCrash GigLang/
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: GigLang-Universal
+          path: GigLang
