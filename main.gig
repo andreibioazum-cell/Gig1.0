@@ -1,82 +1,152 @@
-import graphics
-import physics2d
-import audio
-import input
-import ui
-import timer
-import tween
-import storage
-import firebase
-import camera
-import json
+let coins = 0
+let clickPower = 1
+let autoPower = 0
+let upgradeCost = 10
+let autoCost = 50
+let totalClicks = 0
+let gameRunning = 1
 
-local score = 0
-local highScore = 0
-local isGameOver = 0
-local playerX = 100
-local playerY = 100
+func showMenu()
+    print("")
+    print("=======================================")
+    print("        GIG CLICKER")
+    print("=======================================")
+    print("Coins: ")
+    print(coins)
+    print("Click Power: ")
+    print(clickPower)
+    print("Auto Power: ")
+    print(autoPower)
+    print("Total Clicks: ")
+    print(totalClicks)
+    print("---------------------------------------")
+    print("1. Click! (+")
+    print(clickPower)
+    print(" coins)")
+    print("2. Upgrade Click Power (")
+    print(upgradeCost)
+    print(" coins)")
+    print("3. Buy Auto Clicker (")
+    print(autoCost)
+    print(" coins)")
+    print("4. Show Stats")
+    print("5. Reset Game")
+    print("0. Exit")
+    print("---------------------------------------")
+    print("Choose action: ")
 
-function game_load()
-    storage:save("high_score.dat", "250")
-    local savedData = storage:load("high_score.dat")
-    highScore = 250
-    
-    physics2d:newWorld(0.0, 9.81)
-    physics2d:newBody("player", 100, 100, "dynamic")
-    physics2d:newBody("floor", 0, 500, "static")
+func click()
+    coins = coins + clickPower
+    totalClicks = totalClicks + 1
+    print("Click! +")
+    print(clickPower)
+    print(" coins")
 
-    audio:load("jump_sound", "assets/audio/jump.wav")
-    audio:load("coin_sound", "assets/audio/coin.wav")
-    audio:play("coin_sound")
+func upgradeClick()
+    if coins >= upgradeCost
+        coins = coins - upgradeCost
+        clickPower = clickPower + 1
+        upgradeCost = upgradeCost * 2
+        print("Click Power upgraded!")
+        print("New Power: ")
+        print(clickPower)
+        print("Next upgrade: ")
+        print(upgradeCost)
+    else
+        print("Not enough coins!")
+        print("Need: ")
+        print(upgradeCost)
+        print(" coins")
 
-    ui:newMenu("main_menu")
-    ui:newHUD()
+func buyAuto()
+    if coins >= autoCost
+        coins = coins - autoCost
+        autoPower = autoPower + 1
+        autoCost = autoCost * 2
+        print("Auto Clicker bought!")
+        print("Auto Power: ")
+        print(autoPower)
+        print("Next auto: ")
+        print(autoCost)
+    else
+        print("Not enough coins!")
+        print("Need: ")
+        print(autoCost)
+        print(" coins")
 
-    camera:new()
-    camera:follow(100, 100)
+func showStats()
+    print("")
+    print("=======================================")
+    print("            STATS")
+    print("=======================================")
+    print("Total Coins: ")
+    print(coins)
+    print("Total Clicks: ")
+    print(totalClicks)
+    print("Click Power: ")
+    print(clickPower)
+    print("Auto Power: ")
+    print(autoPower)
+    print("Click Upgrade Cost: ")
+    print(upgradeCost)
+    print("Auto Upgrade Cost: ")
+    print(autoCost)
+    let coinsPerSecond = autoPower * 1
+    print("Coins per second: ")
+    print(coinsPerSecond)
+    let progress = (coins * 100) / upgradeCost
+    print("Progress to next upgrade: ")
+    print(progress)
+    print("%")
+    print("=======================================")
 
-    local playerData = json:encode("name", "GigDeveloper")
-    firebase:init("https://gig-demo-database.firebaseio.com/")
-    firebase:put("users/player_1/score", "250")
+func autoClick()
+    if autoPower > 0
+        coins = coins + autoPower
+        print("Auto click! +")
+        print(autoPower)
+        print(" coins")
 
-    timer:new(1000, "on_second_elapsed")
-    
-    print("Gig Engine: Game Loaded successfully!")
-end
+func resetGame()
+    coins = 0
+    clickPower = 1
+    autoPower = 0
+    upgradeCost = 10
+    autoCost = 50
+    totalClicks = 0
+    print("Game Reset!")
+    print("Starting fresh...")
 
-function on_second_elapsed()
-    score = score + 10
-    print("Timer tick! Current score updated to: " .. score)
-end
+func saveGame()
+    print("Game saved!")
+    print("Progress saved successfully")
 
-function game_update(dt)
-    if input:key_pressed("space") then
-        audio:play("jump_sound")
-        score = score + 1
-        playerY = playerY - 15
-        tween:to("player", 0.5, "y")
-    end
+func loadGame()
+    print("Loading game...")
+    print("Game loaded!")
 
-    if input:key_pressed("right") then
-        playerX = playerX + 5
-    end
+func gameLoop()
+    let choice = 0
+    while gameRunning == 1
+        showMenu()
+        let autoTick = 0
+        for tick = 0; tick < 10; tick = tick + 1
+            if autoPower > 0
+                if tick % 3 == 0
+                    autoClick()
+            if tick % 2 == 0
+                print("")
+                print("Current: ")
+                print(coins)
+                print(" coins | Power: ")
+                print(clickPower)
+                print(" | Auto: ")
+                print(autoPower)
+        saveGame()
 
-    if input:key_pressed("left") then
-        playerX = playerX - 5
-    end
-end
+print("GIG CLICKER STARTED!")
+print("Type 1 to click, 2 to upgrade, 3 to buy auto")
+print("Press 0 to exit")
 
-function game_draw()
-    camera:apply()
-
-    graphics:clear(0.15, 0.15, 0.15)
-
-    graphics:draw_rect(0, 500, 800, 100, "green")
-
-    graphics:draw_circle(playerX, playerY, 30, "blue")
-
-    graphics:draw_text("SCORE: " .. score, 20, 40, 24)
-    graphics:draw_text("HIGH SCORE: " .. highScore, 20, 80, 20)
-
-    camera:unapply()
-end
+gameLoop()
+print("Thanks for playing GIG CLICKER!")
