@@ -1,152 +1,66 @@
 let coins = 0
 let clickPower = 1
-let autoPower = 0
 let upgradeCost = 10
-let autoCost = 50
-let totalClicks = 0
 let gameRunning = 1
 
 func showMenu()
     print("")
-    print("=======================================")
-    print("        GIG CLICKER")
-    print("=======================================")
+    print("=================================")
+    print("         GIG CLICKER")
+    print("=================================")
     print("Coins: ")
     print(coins)
     print("Click Power: ")
     print(clickPower)
-    print("Auto Power: ")
-    print(autoPower)
-    print("Total Clicks: ")
-    print(totalClicks)
-    print("---------------------------------------")
-    print("1. Click! (+")
-    print(clickPower)
-    print(" coins)")
-    print("2. Upgrade Click Power (")
+    print("Upgrade Cost: ")
     print(upgradeCost)
-    print(" coins)")
-    print("3. Buy Auto Clicker (")
-    print(autoCost)
-    print(" coins)")
-    print("4. Show Stats")
-    print("5. Reset Game")
+    print("---------------------------------")
+    print("1. Click")
+    print("2. Upgrade")
     print("0. Exit")
-    print("---------------------------------------")
-    print("Choose action: ")
+    print("=================================")
 
 func click()
     coins = coins + clickPower
-    totalClicks = totalClicks + 1
     print("Click! +")
     print(clickPower)
     print(" coins")
+    print("Total: ")
+    print(coins)
 
-func upgradeClick()
+func upgrade()
     if coins >= upgradeCost
         coins = coins - upgradeCost
         clickPower = clickPower + 1
         upgradeCost = upgradeCost * 2
-        print("Click Power upgraded!")
-        print("New Power: ")
+        print("Upgraded! Power: ")
         print(clickPower)
-        print("Next upgrade: ")
+        print("Next cost: ")
         print(upgradeCost)
     else
         print("Not enough coins!")
         print("Need: ")
         print(upgradeCost)
-        print(" coins")
-
-func buyAuto()
-    if coins >= autoCost
-        coins = coins - autoCost
-        autoPower = autoPower + 1
-        autoCost = autoCost * 2
-        print("Auto Clicker bought!")
-        print("Auto Power: ")
-        print(autoPower)
-        print("Next auto: ")
-        print(autoCost)
-    else
-        print("Not enough coins!")
-        print("Need: ")
-        print(autoCost)
-        print(" coins")
-
-func showStats()
-    print("")
-    print("=======================================")
-    print("            STATS")
-    print("=======================================")
-    print("Total Coins: ")
-    print(coins)
-    print("Total Clicks: ")
-    print(totalClicks)
-    print("Click Power: ")
-    print(clickPower)
-    print("Auto Power: ")
-    print(autoPower)
-    print("Click Upgrade Cost: ")
-    print(upgradeCost)
-    print("Auto Upgrade Cost: ")
-    print(autoCost)
-    let coinsPerSecond = autoPower * 1
-    print("Coins per second: ")
-    print(coinsPerSecond)
-    let progress = (coins * 100) / upgradeCost
-    print("Progress to next upgrade: ")
-    print(progress)
-    print("%")
-    print("=======================================")
-
-func autoClick()
-    if autoPower > 0
-        coins = coins + autoPower
-        print("Auto click! +")
-        print(autoPower)
-        print(" coins")
-
-func resetGame()
-    coins = 0
-    clickPower = 1
-    autoPower = 0
-    upgradeCost = 10
-    autoCost = 50
-    totalClicks = 0
-    print("Game Reset!")
-    print("Starting fresh...")
-
-func saveGame()
-    print("Game saved!")
-    print("Progress saved successfully")
-
-func loadGame()
-    print("Loading game...")
-    print("Game loaded!")
-
-func gameLoop()
-    let choice = 0
-    while gameRunning == 1
-        showMenu()
-        let autoTick = 0
-        for tick = 0; tick < 10; tick = tick + 1
-            if autoPower > 0
-                if tick % 3 == 0
-                    autoClick()
-            if tick % 2 == 0
-                print("")
-                print("Current: ")
-                print(coins)
-                print(" coins | Power: ")
-                print(clickPower)
-                print(" | Auto: ")
-                print(autoPower)
-        saveGame()
 
 print("GIG CLICKER STARTED!")
-print("Type 1 to click, 2 to upgrade, 3 to buy auto")
-print("Press 0 to exit")
+print("")
 
-gameLoop()
-print("Thanks for playing GIG CLICKER!")
+gameRunning = 1
+while gameRunning == 1
+    showMenu()
+    print("Choose: ")
+    let choice = 0
+    
+    if choice == 1
+        click()
+    else
+        if choice == 2
+            upgrade()
+        else
+            if choice == 0
+                gameRunning = 0
+                print("Goodbye!")
+            else
+                print("Unknown command")
+
+print("Thanks for playing!")
