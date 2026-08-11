@@ -1,0 +1,141 @@
+// === Лобби, меню комнат, ожидание, настройки ===
+
+// --- Лобби (state 0) ---
+
+function draw_lobby
+    rect 0, 0, screen_w, screen_h, 0x1a1a2e
+    ctext "Cubic Battle 4", screen_h / 2 - 150, 0xFFFFFF
+    num bw = 260
+    num bh = 66
+    num bx = (screen_w - bw) / 2
+    num gap = 18
+    button "Play",     bx, screen_h / 2 - 60, bw, bh
+    button "Online",   bx, screen_h / 2 - 60 + bh + gap, bw, bh
+    button "Settings", bx, screen_h / 2 - 60 + (bh + gap) * 2, bw, bh
+end
+
+function touch_lobby num tx, num ty, num taction
+    if taction != 0
+        return
+    end
+    num bw = 260
+    num bh = 66
+    num bx = (screen_w - bw) / 2
+    num gap = 18
+    num by1 = screen_h / 2 - 60
+    if tx >= bx - 18 && tx <= bx + bw + 18 && ty >= by1 - 18 && ty <= by1 + bh + 18
+        start_transition 1
+        return
+    end
+    num by2 = by1 + bh + gap
+    if tx >= bx - 18 && tx <= bx + bw + 18 && ty >= by2 - 18 && ty <= by2 + bh + 18
+        game_state = 2
+        return
+    end
+    num by3 = by1 + (bh + gap) * 2
+    if tx >= bx - 18 && tx <= bx + bw + 18 && ty >= by3 - 18 && ty <= by3 + bh + 18
+        game_state = 5
+        return
+    end
+end
+
+// --- Меню комнат (state 2) ---
+
+function draw_online_menu
+    rect 0, 0, screen_w, screen_h, 0x1a1a2e
+    ctext "Select Room", screen_h / 2 - 150, 0xFFFFFF
+    num bw = 260
+    num bh = 66
+    num bx = (screen_w - bw) / 2
+    num gap = 18
+    button "test1", bx, screen_h / 2 - 60, bw, bh
+    button "test2", bx, screen_h / 2 - 60 + bh + gap, bw, bh
+    button "Back",  bx, screen_h / 2 - 60 + (bh + gap) * 2, bw, bh
+end
+
+function touch_online_menu num tx, num ty, num taction
+    if taction != 0
+        return
+    end
+    num bw = 260
+    num bh = 66
+    num bx = (screen_w - bw) / 2
+    num gap = 18
+    num by1 = screen_h / 2 - 60
+    if tx >= bx - 18 && tx <= bx + bw + 18 && ty >= by1 - 18 && ty <= by1 + bh + 18
+        join_room "test1"
+        return
+    end
+    num by2 = by1 + bh + gap
+    if tx >= bx - 18 && tx <= bx + bw + 18 && ty >= by2 - 18 && ty <= by2 + bh + 18
+        join_room "test2"
+        return
+    end
+    num by3 = by1 + (bh + gap) * 2
+    if tx >= bx - 18 && tx <= bx + bw + 18 && ty >= by3 - 18 && ty <= by3 + bh + 18
+        game_state = 0
+        return
+    end
+end
+
+function join_room str name
+    room_name = name
+    net_connect "broker.hivemq.com", 1883
+    net_create name
+    game_state = 3
+end
+
+// --- Ожидание пира (state 3) ---
+
+function draw_waiting
+    rect 0, 0, screen_w, screen_h, 0x1a1a2e
+    ctext "Room: " + room_name, screen_h / 2 - 80, 0xCCCCCC
+    if net_state == 1
+        ctext "Connecting to broker...", screen_h / 2 - 20, 0xFFCC00
+    else if net_state == 2
+        ctext "Joining room...", screen_h / 2 - 20, 0xFFCC00
+    else if net_state == 3
+        ctext "Waiting for peer...", screen_h / 2 - 20, 0xFFCC00
+    else if net_state == 4
+        ctext "Peer found!", screen_h / 2 - 20, 0x7ED321
+    end
+    num bw = 260
+    num bh = 66
+    button "Cancel", (screen_w - bw) / 2, screen_h / 2 + 60, bw, bh
+end
+
+function touch_waiting num tx, num ty, num taction
+    if taction != 0
+        return
+    end
+    num bx = (screen_w - 260) / 2
+    num by = screen_h / 2 + 60
+    if tx >= bx - 18 && tx <= bx + 278 && ty >= by - 18 && ty <= by + 84
+        net_close
+        game_state = 0
+    end
+end
+
+// --- Настройки (state 5) ---
+
+function draw_settings
+    rect 0, 0, screen_w, screen_h, 0x1a1a2e
+    ctext "Settings", screen_h / 2 - 120, 0xFFFFFF
+    ctext "Broker: broker.hivemq.com", screen_h / 2 - 50, 0xCCCCCC
+    ctext "Port: 1883", screen_h / 2, 0xCCCCCC
+    ctext "(no VPS needed!)", screen_h / 2 + 40, 0x7ED321
+    num bw = 260
+    num bh = 66
+    button "Back", (screen_w - bw) / 2, screen_h / 2 + 110, bw, bh
+end
+
+function touch_settings num tx, num ty, num taction
+    if taction != 0
+        return
+    end
+    num bx = (screen_w - 260) / 2
+    num by = screen_h / 2 + 110
+    if tx >= bx - 18 && tx <= bx + 278 && ty >= by - 18 && ty <= by + 84
+        game_state = 0
+    end
+end

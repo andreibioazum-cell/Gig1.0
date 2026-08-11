@@ -1,0 +1,28 @@
+// === Глобальные переменные ===
+
+num game_state = 0
+num t_dir = 0
+num t_target = 0
+num t_fade = 0
+
+str GRASS = "grass.png"
+str TEX   = "player.png"
+
+num aim_range = 240
+num aim_fade  = 90
+
+Player player = new Player()
+Player peer   = new Player()
+Enemy  enemy  = new Enemy()
+Bullet bullet = new Bullet()
+Bullet peer_bullet = new Bullet()
+
+num finished  = 0
+num joy_speed = 3.2
+num aiming    = 0
+num atk_x     = 0
+num atk_y     = 0
+num joy_id    = -1
+num aim_id    = -1
+
+str room_name = ""

@@ -1,0 +1,432 @@
+// === Логика: одиночный бой, онлайн PvP, джойстик, переходы ===
+
+// ============================================================
+//  Джойстик и мультитач
+// ============================================================
+
+function drop_joy
+    joy_id = -1
+    joy.dx = 0
+    joy.dy = 0
+    joy.ox = 0
+    joy.oy = 0
+end
+
+function joy_touch num jx, num jy, num jaction, num jid
+    if jaction == 1
+        if jid == joy_id
+            drop_joy
+        end
+        return
+    end
+    if jaction == 0
+        if joy_id != -1
+            return
+        end
+        num hx = jx - joy.x
+        num hy = jy - joy.y
+        if sqrt(hx * hx + hy * hy) > 150
+            return
+        end
+        joy_id = jid
+    end
+    if jid != joy_id
+        return
+    end
+    num jdx = jx - joy.x
+    num jdy = jy - joy.y
+    num jdist = sqrt(jdx * jdx + jdy * jdy)
+    if jdist > joy.r
+        joy.dx = jdx / jdist
+        joy.dy = jdy / jdist
+        joy.ox = joy.dx * joy.r
+        joy.oy = joy.dy * joy.r
+    else
+        joy.dx = jdx / joy.r
+        joy.dy = jdy / joy.r
+        joy.ox = jdx
+        joy.oy = jdy
+    end
+end
+
+// ============================================================
+//  Общие игровые helpers
+// ============================================================
+
+function clamp_player
+    if player.x < player.size
+        player.x = player.size
+    end
+    if player.x > screen_w - player.size
+        player.x = screen_w - player.size
+    end
+    if player.y < player.size
+        player.y = player.size
+    end
+    if player.y > screen_h - player.size
+        player.y = screen_h - player.size
+    end
+end
+
+// ============================================================
+//  Переходы
+// ============================================================
+
+function start_transition num target
+    if t_dir != 0
+        return
+    end
+    t_target = target
+    t_dir = 1
+end
+
+function update_transition
+    if t_dir == 1
+        t_fade = t_fade + dt / 0.25
+        if t_fade >= 1
+            t_fade = 1
+            game_state = t_target
+            if t_target == 1
+                init_game
+            end
+            t_dir = -1
+        end
+    else if t_dir == -1
+        t_fade = t_fade - dt / 0.25
+        if t_fade <= 0
+            t_fade = 0
+            t_dir = 0
+        end
+    end
+end
+
+// ============================================================
+//  Одиночный бой
+// ============================================================
+
+function init_game
+    player.x = screen_w / 2
+    player.y = screen_h / 2
+    player.angle = 0
+    player.hp = player.max_hp
+    enemy.hp = enemy.max_hp
+    finished = 0
+    bullet.active = 0
+    aiming = 0
+    aim_id = -1
+    joy.x = 130
+    joy.y = screen_h - 150
+    joy.r = 70
+    atk_x = screen_w - 140
+    atk_y = screen_h - 150
+    drop_joy
+    spawn_enemy
+end
+
+function spawn_enemy
+    num tries = 0
+    loop tries < 50
+        enemy.x = 50 + rand() % (screen_w - 100)
+        enemy.y = 50 + rand() % (screen_h - 100)
+        num sdx = enemy.x - player.x
+        num sdy = enemy.y - player.y
+        if sqrt(sdx * sdx + sdy * sdy) > 250
+            return
+        end
+        tries = tries + 1
+    end
+    enemy.x = 50
+    enemy.y = 50
+end
+
+function update_game
+    if finished != 0
+        return
+    end
+    player.x = player.x + joy.dx * joy_speed
+    player.y = player.y + joy.dy * joy_speed
+    if joy.dx != 0 || joy.dy != 0
+        player.angle = atan2(joy.dy, joy.dx)
+    end
+    clamp_player
+    // Враг
+    num gdx = player.x - enemy.x
+    num gdy = player.y - enemy.y
+    num gdist = sqrt(gdx * gdx + gdy * gdy)
+    if gdist > 1
+        enemy.x = enemy.x + gdx / gdist * enemy.speed
+        enemy.y = enemy.y + gdy / gdist * enemy.speed
+    end
+    enemy.angle = atan2(gdy, gdx)
+    if gdist < player.size + enemy.size
+        player.hp = player.hp - 1
+        if player.hp <= 0
+            finish_game 2
+            return
+        end
+        spawn_enemy
+    end
+    if bullet.active == 0
+        return
+    end
+    update_bullet
+end
+
+function update_bullet
+    bullet.x = bullet.x + bullet.dx * bullet.speed
+    bullet.y = bullet.y + bullet.dy * bullet.speed
+    bullet.traveled = bullet.traveled + bullet.speed
+    if bullet.traveled >= aim_range || bullet.x < -bullet.r || bullet.x > screen_w + bullet.r || bullet.y < -bullet.r || bullet.y > screen_h + bullet.r
+        bullet.active = 0
+        return
+    end
+    num bdx = enemy.x - bullet.x
+    num bdy = enemy.y - bullet.y
+    num bdist = sqrt(bdx * bdx + bdy * bdy)
+    num hit_r = bullet.r
+    num left = aim_range - bullet.traveled
+    if left < aim_fade
+        hit_r = bullet.r * left / aim_fade
+    end
+    if bdist <= enemy.size + hit_r
+        bullet.active = 0
+        enemy.hp = enemy.hp - 1
+        if enemy.hp <= 0
+            finish_game 1
+        end
+    end
+end
+
+function fire_bullet
+    num fdx = cos(player.angle)
+    num fdy = sin(player.angle)
+    bullet.x = player.x + fdx * (player.size + bullet.r + 4)
+    bullet.y = player.y + fdy * (player.size + bullet.r + 4)
+    bullet.dx = fdx
+    bullet.dy = fdy
+    bullet.traveled = 0
+    bullet.active = 1
+end
+
+function finish_game num result
+    finished = result
+    aiming = 0
+    aim_id = -1
+    bullet.active = 0
+    drop_joy
+end
+
+function touch_game num tx, num ty, num taction, num tid
+    if finished != 0
+        if taction == 0
+            start_transition 0
+        end
+        return
+    end
+    if taction == 3
+        aiming = 0
+        aim_id = -1
+        drop_joy
+        return
+    end
+    if tx >= (screen_w - 156) / 2 && tx <= (screen_w + 156) / 2 && ty >= 0 && ty <= 72
+        if taction == 0 || taction == 1
+            start_transition 0
+            return
+        end
+    end
+    if taction == 0
+        num adx = tx - atk_x
+        num ady = ty - atk_y
+        if sqrt(adx * adx + ady * ady) <= 96
+            aiming = 1
+            aim_id = tid
+            fire_bullet
+            return
+        end
+    end
+    if taction == 1 && tid == aim_id
+        aiming = 0
+        aim_id = -1
+        return
+    end
+    joy_touch tx, ty, taction, tid
+end
+
+// ============================================================
+//  Онлайн PvP
+// ============================================================
+
+function start_online_game
+    init_online_game
+    game_state = 4
+end
+
+function init_online_game
+    if net_am_host == 1
+        player.x = screen_w / 4
+        peer.x   = screen_w * 3 / 4
+    else
+        player.x = screen_w * 3 / 4
+        peer.x   = screen_w / 4
+    end
+    player.y = screen_h / 2
+    peer.y   = screen_h / 2
+    player.angle = 0
+    peer.angle   = 3.14159
+    player.hp    = player.max_hp
+    peer.hp      = peer.max_hp
+    finished = 0
+    bullet.active      = 0
+    peer_bullet.active = 0
+    aiming = 0
+    aim_id = -1
+    joy.x = 130
+    joy.y = screen_h - 150
+    joy.r = 70
+    atk_x = screen_w - 140
+    atk_y = screen_h - 150
+    drop_joy
+end
+
+function update_online_game
+    net_poll
+    // Позиция пира
+    if net_state == 4
+        peer.x     = net_peer_x
+        peer.y     = net_peer_y
+        peer.angle = net_peer_angle
+    end
+    // Пир ушёл
+    if net_state == 3
+        finished = 2
+        return
+    end
+    // Пир выстрелил
+    if net_peer_fire == 1
+        peer_bullet.x  = net_peer_bx
+        peer_bullet.y  = net_peer_by
+        peer_bullet.dx = net_peer_bdx
+        peer_bullet.dy = net_peer_bdy
+        peer_bullet.traveled = 0
+        peer_bullet.active   = 1
+    end
+    // Пир попал
+    if net_peer_hit == 1
+        peer.hp = peer.hp - 1
+        if peer.hp <= 0
+            finished = 1
+            return
+        end
+    end
+    if finished != 0
+        return
+    end
+    // Движение
+    player.x = player.x + joy.dx * joy_speed
+    player.y = player.y + joy.dy * joy_speed
+    if joy.dx != 0 || joy.dy != 0
+        player.angle = atan2(joy.dy, joy.dx)
+    end
+    clamp_player
+    net_send_pos player.x, player.y, player.angle
+    // Локальная пуля
+    if bullet.active == 1
+        bullet.x = bullet.x + bullet.dx * bullet.speed
+        bullet.y = bullet.y + bullet.dy * bullet.speed
+        bullet.traveled = bullet.traveled + bullet.speed
+        if bullet.traveled >= aim_range || bullet.x < -bullet.r || bullet.x > screen_w + bullet.r || bullet.y < -bullet.r || bullet.y > screen_h + bullet.r
+            bullet.active = 0
+        else
+            num cdx = peer.x - bullet.x
+            num cdy = peer.y - bullet.y
+            num cdist = sqrt(cdx * cdx + cdy * cdy)
+            num hit_r = bullet.r
+            num left = aim_range - bullet.traveled
+            if left < aim_fade
+                hit_r = bullet.r * left / aim_fade
+            end
+            if cdist <= peer.size + hit_r
+                bullet.active = 0
+                net_send_hit
+            end
+        end
+    end
+    // Пуля пира
+    if peer_bullet.active == 1
+        peer_bullet.x = peer_bullet.x + peer_bullet.dx * peer_bullet.speed
+        peer_bullet.y = peer_bullet.y + peer_bullet.dy * peer_bullet.speed
+        peer_bullet.traveled = peer_bullet.traveled + peer_bullet.speed
+        if peer_bullet.traveled >= aim_range || peer_bullet.x < -peer_bullet.r || peer_bullet.x > screen_w + peer_bullet.r || peer_bullet.y < -peer_bullet.r || peer_bullet.y > screen_h + peer_bullet.r
+            peer_bullet.active = 0
+        else
+            num pdx = player.x - peer_bullet.x
+            num pdy = player.y - peer_bullet.y
+            num pdist = sqrt(pdx * pdx + pdy * pdy)
+            num phr = peer_bullet.r
+            num pl = aim_range - peer_bullet.traveled
+            if pl < aim_fade
+                phr = peer_bullet.r * pl / aim_fade
+            end
+            if pdist <= player.size + phr
+                peer_bullet.active = 0
+                player.hp = player.hp - 1
+                if player.hp <= 0
+                    finished = 2
+                    return
+                end
+            end
+        end
+    end
+end
+
+function fire_online_bullet
+    num fdx = cos(player.angle)
+    num fdy = sin(player.angle)
+    bullet.x = player.x + fdx * (player.size + bullet.r + 4)
+    bullet.y = player.y + fdy * (player.size + bullet.r + 4)
+    bullet.dx = fdx
+    bullet.dy = fdy
+    bullet.traveled = 0
+    bullet.active = 1
+    net_send_bullet bullet.x, bullet.y, fdx, fdy
+end
+
+function touch_online_game num tx, num ty, num taction, num tid
+    if finished != 0
+        if taction == 0
+            net_close
+            start_transition 0
+        end
+        return
+    end
+    if taction == 3
+        aiming = 0
+        aim_id = -1
+        drop_joy
+        return
+    end
+    if tx >= (screen_w - 156) / 2 && tx <= (screen_w + 156) / 2 && ty >= 0 && ty <= 72
+        if taction == 0 || taction == 1
+            net_close
+            start_transition 0
+            return
+        end
+    end
+    if taction == 0
+        num adx = tx - atk_x
+        num ady = ty - atk_y
+        if sqrt(adx * adx + ady * ady) <= 96
+            aiming = 1
+            aim_id = tid
+            fire_online_bullet
+            return
+        end
+    end
+    if taction == 1 && tid == aim_id
+        aiming = 0
+        aim_id = -1
+        return
+    end
+    joy_touch tx, ty, taction, tid
+end

@@ -1,0 +1,31 @@
+// === Типы сущностей ===
+
+object Player
+    num x = 0
+    num y = 0
+    num size = 30
+    num angle = 0
+    num hp = 10
+    num max_hp = 10
+end
+
+object Enemy
+    num x = 0
+    num y = 0
+    num size = 22
+    num speed = 2.2
+    num hp = 3
+    num max_hp = 3
+    num angle = 0
+end
+
+object Bullet
+    num x = 0
+    num y = 0
+    num dx = 0
+    num dy = 0
+    num r = 12
+    num speed = 13
+    num traveled = 0
+    num active = 0
+end

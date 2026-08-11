@@ -43,10 +43,21 @@ BUILTINS = frozenset({
     'sqrt', 'sin', 'cos', 'atan2', 'floor', 'rand',
     # звёзды фона лобби
     'init_stars', 'update_stars', 'draw_stars',
+    # сеть (онлайн)
+    'net_connect', 'net_close', 'net_create', 'net_join',
+    'net_send_pos', 'net_send_bullet', 'net_send_hit', 'net_poll',
 })
 
-# Глобальные переменные хоста (read-only, кроме joy).
-ENGINE_VARS = {'screen_w': 'num', 'screen_h': 'num', 'dt': 'num', 'joy': 'joy'}
+# Глобальные переменные хоста (read-only, кроме joy и net_*).
+ENGINE_VARS = {
+    'screen_w': 'num', 'screen_h': 'num', 'dt': 'num', 'joy': 'joy',
+    # networking globals
+    'net_state': 'num', 'net_am_host': 'num',
+    'net_peer_x': 'num', 'net_peer_y': 'num', 'net_peer_angle': 'num',
+    'net_peer_bx': 'num', 'net_peer_by': 'num',
+    'net_peer_bdx': 'num', 'net_peer_bdy': 'num',
+    'net_peer_fire': 'num', 'net_peer_hit': 'num',
+}
 
 _NAME = r'[A-Za-z_]\w*'
 _DECL_RE = re.compile(r'^(' + _NAME + r')\s+(' + _NAME + r')\s*(?:=\s*(.*))?$')

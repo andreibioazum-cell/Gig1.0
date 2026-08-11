@@ -1,0 +1,107 @@
+// === Точка входа: хуки init, update, draw, touch ===
+
+function init
+    net_close
+    png_load GRASS
+    png_load TEX
+end
+
+function update
+    update_transition
+    if game_state == 1
+        update_game
+    else if game_state == 3
+        net_poll
+        if net_state == 4
+            start_online_game
+        end
+    else if game_state == 4
+        update_online_game
+    end
+end
+
+// --- Отрисовка одиночного боя ---
+function draw_game
+    draw_game_bg
+    draw_aim_line
+    circle player.x, player.y, player.size / 2, 0xFF8844
+    tex player.x - 20, player.y - 20, TEX, player.angle, 1
+    tex enemy.x - 20, enemy.y - 20, TEX, enemy.angle, 1
+    ring enemy.x, enemy.y, 26, 3, 0xFF2020
+    if bullet.active == 1
+        draw_bullet_visual bullet.x, bullet.y, bullet.traveled, bullet.r, 0xFFF176, 0xFFB300
+    end
+    num hud_w = screen_w / 4
+    hud_bar 20, 20, hud_w, 28, player.hp, player.max_hp, 0x7ED321, 0
+    hud_bar screen_w - hud_w - 20, 20, hud_w, 28, enemy.hp, enemy.max_hp, 0xE94560, 1
+    draw_controls
+    button "Back", (screen_w - 120) / 2, 12, 120, 48
+    if finished != 0
+        draw_finish_panel "Victory!", "Enemy defeated", "Defeat", "The enemy caught you"
+    end
+end
+
+// --- Отрисовка онлайн-боя ---
+function draw_online_game
+    draw_game_bg
+    draw_aim_line
+    circle player.x, player.y, player.size / 2, 0xFF8844
+    tex player.x - 20, player.y - 20, TEX, player.angle, 1
+    circle peer.x, peer.y, peer.size / 2, 0x4488FF
+    tex peer.x - 20, peer.y - 20, TEX, peer.angle, 1
+    ring peer.x, peer.y, peer.size / 2 + 3, 3, 0x2266DD
+    if bullet.active == 1
+        draw_bullet_visual bullet.x, bullet.y, bullet.traveled, bullet.r, 0xFFF176, 0xFFB300
+    end
+    if peer_bullet.active == 1
+        draw_bullet_visual peer_bullet.x, peer_bullet.y, peer_bullet.traveled, peer_bullet.r, 0xFF5555, 0xDD2222
+    end
+    num hud_w = screen_w / 4
+    hud_bar 20, 20, hud_w, 28, player.hp, player.max_hp, 0x7ED321, 0
+    hud_bar screen_w - hud_w - 20, 20, hud_w, 28, peer.hp, peer.max_hp, 0x4488FF, 1
+    draw_controls
+    button "Back", (screen_w - 120) / 2, 12, 120, 48
+    if finished != 0
+        draw_finish_panel "Victory!", "Opponent defeated", "Defeat", "You were eliminated"
+    end
+end
+
+// --- Главная отрисовка ---
+function draw
+    if game_state == 0
+        draw_lobby
+    else if game_state == 1
+        draw_game
+    else if game_state == 2
+        draw_online_menu
+    else if game_state == 3
+        draw_waiting
+    else if game_state == 4
+        draw_online_game
+    else if game_state == 5
+        draw_settings
+    end
+    if t_fade > 0
+        rect 0, 0, screen_w, screen_h, floor(t_fade * 255) * 0x1000000
+    end
+end
+
+// --- Главный обработчик касаний ---
+function touch num tx, num ty, num taction, num tid
+    if t_dir != 0
+        return
+    end
+    if game_state == 0
+        touch_lobby tx, ty, taction
+    else if game_state == 1
+        touch_game tx, ty, taction, tid
+    else if game_state == 2
+        touch_online_menu tx, ty, taction
+    else if game_state == 3
+        touch_waiting tx, ty, taction
+    else if game_state == 4
+        touch_online_game tx, ty, taction, tid
+    else if game_state == 5
+        touch_settings tx, ty, taction
+    end
+end

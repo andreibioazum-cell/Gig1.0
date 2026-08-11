@@ -1,0 +1,86 @@
+// === UI: кнопки, HUD, общие элементы отрисовки ===
+
+function ctext str s, num y, col color
+    text s, (screen_w - text_ink_width(s)) / 2, y, color
+end
+
+function button str label, num bx, num by, num bw, num bh
+    roundrect bx, by, bw, bh, 20, 0x5F10A0
+    text label, bx + (bw - text_ink_width(label)) / 2, by + (bh - text_ink_height(label)) / 2, 0xFFFFFF
+end
+
+function hud_bar num hx, num hy, num hw, num hh, num cur, num maxv, col hcolor, num from_right
+    roundrect hx, hy, hw, hh, hh / 2, 0xDDFFFFFF
+    roundrect hx + 3, hy + 3, hw - 6, hh - 6, (hh - 6) / 2, 0xDD171923
+    num fill_w = (hw - 8) * cur / maxv
+    if fill_w > 0
+        if from_right == 1
+            roundrect hx + hw - 4 - fill_w, hy + 4, fill_w, hh - 8, (hh - 8) / 2, hcolor
+        else
+            roundrect hx + 4, hy + 4, fill_w, hh - 8, (hh - 8) / 2, hcolor
+        end
+    end
+end
+
+function draw_game_bg
+    num dy = 0
+    loop dy < screen_h
+        num dx = 0
+        loop dx < screen_w
+            tex dx, dy, GRASS, 0, 1
+            dx = dx + 256
+        end
+        dy = dy + 256
+    end
+    rect 0, 0, screen_w, screen_h, 0x33000000
+end
+
+function draw_aim_line
+    if aiming == 1 && finished == 0
+        num ax = cos(player.angle)
+        num ay = sin(player.angle)
+        line player.x, player.y, player.x + ax * aim_range, player.y + ay * aim_range, 18, 0x66000000
+    end
+end
+
+function draw_bullet_visual num bx, num by, num btraveled, num br, col bright, col dim
+    num left = aim_range - btraveled
+    num a = 255
+    num bscale = 1
+    if left < aim_fade
+        bscale = left / aim_fade
+        a = floor(255 * bscale)
+    end
+    if a < 1
+        a = 1
+    end
+    num dr = br * bscale
+    circle bx, by, dr, a * 0x1000000 + bright
+    ring bx, by, dr + 2 * bscale, 2 * bscale, a * 0x1000000 + dim
+end
+
+function draw_controls
+    ring joy.x, joy.y, joy.r, 4, 0x000000
+    circle joy.x + joy.ox, joy.y + joy.oy, 34, 0x000000
+    if aiming == 1
+        circle atk_x, atk_y, 76, 0xC73750
+    else
+        circle atk_x, atk_y, 70, 0xE94560
+    end
+    ring atk_x, atk_y, 70, 4, 0x000000
+    text_scaled "Attack", atk_x - text_ink_width("Attack") * 0.275, atk_y - 7, 0xFFFFFF, 0.55
+end
+
+function draw_finish_panel str win_title, str win_sub, str lose_title, str lose_sub
+    rect 0, 0, screen_w, screen_h, 0x99000000
+    num py = screen_h / 2 - 85
+    roundrect screen_w / 2 - 165, py, 330, 170, 24, 0x5F10A0
+    if finished == 1
+        ctext win_title, py + 34, 0xFFFFFF
+        ctext win_sub, py + 75, 0xFFFFFF
+    else
+        ctext lose_title, py + 34, 0xFFFFFF
+        ctext lose_sub, py + 75, 0xFFFFFF
+    end
+    ctext "Tap to return", py + 118, 0xFFCDD2
+end

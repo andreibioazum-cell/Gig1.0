@@ -43,6 +43,25 @@ void ds_request_script_restart(void);
 int ds_script_restart_requested(void);
 void ds_clear_script_restart(void);
 
+/* --- Networking (UDP relay for online multiplayer) --- */
+
+/* Global networking state — readable/writable from DimScript. */
+extern double net_state;       /* 0=off 1=connecting 2=server_ok 3=room_waiting 4=peer_ready */
+extern double net_am_host;     /* 1=host (created room) 0=guest (joined) */
+extern double net_peer_x, net_peer_y, net_peer_angle;
+extern double net_peer_bx, net_peer_by, net_peer_bdx, net_peer_bdy;
+extern double net_peer_fire;   /* 1 if peer fired this frame */
+extern double net_peer_hit;    /* 1 if peer was hit this frame */
+
+void net_connect(const char *host, double port);
+void net_close(void);
+void net_create(const char *name);
+void net_join(const char *name);
+void net_send_pos(double x, double y, double angle);
+void net_send_bullet(double x, double y, double dx, double dy);
+void net_send_hit(void);
+void net_poll(void);
+
 char *ds_concat(const char *left, const char *right);
 char *ds_num_to_string(double number);
 void ds_string_pool_reset(void);
