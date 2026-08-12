@@ -60,7 +60,7 @@ int main(int argc, char **argv) {
     init(NULL);
 
     /* Лобби: кнопка «Онлайн» — вторая. */
-    tap((float)screen_w / 2, (float)screen_h / 2 + 94);
+    tap((float)screen_w / 2, (float)screen_h / 2 + 50);
     wait_transition();
 
     /* Ждём, пока сеть найдёт соперника. */

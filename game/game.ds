@@ -5,7 +5,8 @@
 // координаты, поворот и здоровье, а чужую папку только читает. Урон себе
 // считает тоже каждый сам — поэтому спорить о попаданиях некому.
 
-num game_state = 0      // 0 — лобби, 1 — бой с ботом, 2 — онлайн
+num game_state = 0      // 0 — лобби, 1 — бой с ботом, 2 — онлайн, 3 — настройки
+num lang = 0            // 0 — русский, 1 — English
 num t_dir = 0           // переход: 1 — затемнение, -1 — осветление, 0 — нет
 num t_target = 0
 num t_fade = 0
@@ -86,6 +87,18 @@ num placed = 0          // стартовая позиция расставле�
 num my_shot = 0         // номер моего выстрела, растёт на каждый выстрел
 num peer_shot = 0       // последний засчитанный выстрел соперника
 
+// --- Язык ---
+
+// Подписи храним парами прямо в месте использования: t("Один", "Solo").
+// Отдельного словаря нет намеренно — так строку невозможно потерять
+// при переименовании ключа, и перевод виден рядом с оригиналом.
+function t str ru, str en
+    if lang == 1
+        return en
+    end
+    return ru
+end
+
 // --- Помощники отрисовки ---
 
 function ctext str s, num y, col color
@@ -121,9 +134,10 @@ function draw_lobby
     rect 0, 0, screen_w, screen_h, 0x1a1a2e
     update_stars
     draw_stars
-    ctext "Кубическая битва", screen_h / 2 - 130, 0xFFFFFF
-    button "Один", (screen_w - 240) / 2, screen_h / 2 - 40, 240, 76
-    button "Онлайн", (screen_w - 240) / 2, screen_h / 2 + 56, 240, 76
+    ctext t("Кубическая битва", "Cubic Battle"), screen_h / 2 - 160, 0xFFFFFF
+    button t("Один", "Solo"), (screen_w - 240) / 2, screen_h / 2 - 76, 240, 68
+    button t("Онлайн", "Online"), (screen_w - 240) / 2, screen_h / 2 + 16, 240, 68
+    button t("Настройки", "Settings"), (screen_w - 240) / 2, screen_h / 2 + 108, 240, 68
 end
 
 function touch_lobby num x, num y, num action
@@ -135,10 +149,57 @@ function touch_lobby num x, num y, num action
     if x < (screen_w - 276) / 2 || x > (screen_w + 276) / 2
         return
     end
-    if y >= screen_h / 2 - 58 && y <= screen_h / 2 + 34
+    if y >= screen_h / 2 - 84 && y <= screen_h / 2 + 4
         start_transition 1
-    else if y >= screen_h / 2 + 38 && y <= screen_h / 2 + 150
+    else if y >= screen_h / 2 + 8 && y <= screen_h / 2 + 96
         start_transition 2
+    else if y >= screen_h / 2 + 100 && y <= screen_h / 2 + 188
+        start_transition 3
+    end
+end
+
+// --- Настройки ---
+
+// Кнопка выбора: подсвечена, если вариант активен.
+function choice str label, num bx, num by, num w, num h, num on
+    if on == 1
+        roundrect bx, by, w, h, 20, 0x7ED321
+        roundrect bx + 4, by + 4, w - 8, h - 8, 16, 0x2E7D32
+    else
+        roundrect bx, by, w, h, 20, 0x5F10A0
+    end
+    text label, bx + (w - text_ink_width(label)) / 2, by + (h - text_ink_height(label)) / 2, 0xFFFFFF
+end
+
+function draw_settings
+    rect 0, 0, screen_w, screen_h, 0x1a1a2e
+    update_stars
+    draw_stars
+    ctext t("Настройки", "Settings"), screen_h / 2 - 150, 0xFFFFFF
+    ctext t("Язык", "Language"), screen_h / 2 - 78, 0xB0BEC5
+    choice "Русский", screen_w / 2 - 250, screen_h / 2 - 40, 240, 76, 1 - lang
+    choice "English", screen_w / 2 + 10, screen_h / 2 - 40, 240, 76, lang
+    button t("Назад", "Back"), (screen_w - 240) / 2, screen_h / 2 + 80, 240, 68
+end
+
+function touch_settings num x, num y, num action
+    if action != 0 && action != 1
+        return
+    end
+    // Ряд с языками.
+    if y >= screen_h / 2 - 46 && y <= screen_h / 2 + 42
+        if x >= screen_w / 2 - 256 && x <= screen_w / 2 - 4
+            lang = 0
+        else if x >= screen_w / 2 + 4 && x <= screen_w / 2 + 256
+            lang = 1
+        end
+        return
+    end
+    // Кнопка «Назад».
+    if y >= screen_h / 2 + 76 && y <= screen_h / 2 + 152
+        if x >= (screen_w - 276) / 2 && x <= (screen_w + 276) / 2
+            start_transition 0
+        end
     end
 end
 
@@ -491,8 +552,9 @@ function draw_controls
         circle atk_x, atk_y, 70, 0xE94560
     end
     ring atk_x, atk_y, 70, 4, 0x000000
-    text_scaled "Огонь", atk_x - text_ink_width("Огонь") * 0.275, atk_y - 7, 0xFFFFFF, 0.55
-    button "Назад", (screen_w - 120) / 2, 12, 120, 48
+    str fire = t("Огонь", "Fire")
+    text_scaled fire, atk_x - text_ink_width(fire) * 0.275, atk_y - 7, 0xFFFFFF, 0.55
+    button t("Назад", "Back"), (screen_w - 120) / 2, 12, 120, 48
 end
 
 function draw_result str title, str note
@@ -501,7 +563,7 @@ function draw_result str title, str note
     roundrect screen_w / 2 - 165, panel_y, 330, 170, 24, 0x5F10A0
     ctext title, panel_y + 34, 0xFFFFFF
     ctext note, panel_y + 75, 0xFFFFFF
-    ctext "Нажмите, чтобы выйти", panel_y + 118, 0xFFCDD2
+    ctext t("Нажмите, чтобы выйти", "Tap to exit"), panel_y + 118, 0xFFCDD2
 end
 
 function draw_game
@@ -517,9 +579,9 @@ function draw_game
     draw_controls
 
     if finished == 1
-        draw_result "Победа!", "Враг повержен"
+        draw_result t("Победа!", "Victory!"), t("Враг повержен", "Enemy defeated")
     else if finished == 2
-        draw_result "Поражение", "Враг вас догнал"
+        draw_result t("Поражение", "Defeat"), t("Враг вас догнал", "The enemy caught you")
     end
 end
 
@@ -540,19 +602,19 @@ function draw_online
     // Строка состояния сети под кнопкой «Назад».
     num status = net_status()
     if status == 4
-        ctext "Нет соединения", 76, 0xFF8A80
+        ctext t("Нет соединения", "No connection"), 76, 0xFF8A80
     else if status == 1
-        ctext "Подключение...", 76, 0xFFF176
+        ctext t("Подключение...", "Connecting..."), 76, 0xFFF176
     else if peer.ready == 0
-        ctext "Ждём соперника...", 76, 0xFFF176
+        ctext t("Ждём соперника...", "Waiting for opponent..."), 76, 0xFFF176
     else if net_peer_online() == 0
-        ctext "Соперник отключился", 76, 0xFF8A80
+        ctext t("Соперник отключился", "Opponent disconnected"), 76, 0xFF8A80
     end
 
     if finished == 1
-        draw_result "Победа!", "Соперник повержен"
+        draw_result t("Победа!", "Victory!"), t("Соперник повержен", "Opponent defeated")
     else if finished == 2
-        draw_result "Поражение", "Соперник оказался точнее"
+        draw_result t("Поражение", "Defeat"), t("Соперник оказался точнее", "Your opponent aimed better")
     end
 end
 
@@ -704,6 +766,8 @@ function draw
         draw_lobby
     else if game_state == 1
         draw_game
+    else if game_state == 3
+        draw_settings
     else
         draw_online
     end
@@ -719,6 +783,8 @@ function touch num x, num y, num action, num id
     end
     if game_state == 0
         touch_lobby x, y, action
+    else if game_state == 3
+        touch_settings x, y, action
     else
         touch_battle x, y, action, id
     end

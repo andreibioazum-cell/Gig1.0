@@ -256,8 +256,33 @@ class DimScriptCompiler:
         else:
             self.functions[name] = (params, body)
             if any(line.startswith('return ') for line in body):
-                self.func_ret[name] = 'num'
+                self.func_ret[name] = 'num'   # уточняется в _infer_returns()
         return j
+
+    def _infer_returns(self):
+        """Уточняет тип возвращаемого значения: num или str.
+
+        Литерал "..." или str-выражение делают функцию строковой. Проходим
+        несколько раз, чтобы функция, возвращающая результат другой функции,
+        тоже получила верный тип."""
+        for _pass in range(4):
+            changed = False
+            for name in self.func_ret:
+                params, body = self.functions[name]
+                saved = self.scope
+                self.scope = {pn: pt for pt, pn in params}
+                kind = 'num'
+                for line in body:
+                    if line.startswith('return '):
+                        if self.expr_type(line[7:].strip()) == 'str':
+                            kind = 'str'
+                            break
+                self.scope = saved
+                if self.func_ret[name] != kind:
+                    self.func_ret[name] = kind
+                    changed = True
+            if not changed:
+                break
 
     def _parse_params(self, text):
         params = []
@@ -340,6 +365,9 @@ class DimScriptCompiler:
             return self.scope[expr]
         if expr in self.vars:
             return self.vars[expr][0]
+        call = re.match(r'^(' + _NAME + r')\s*\(.*\)$', expr)
+        if call and call.group(1) in self.func_ret:
+            return self.func_ret[call.group(1)]
         return ENGINE_VARS.get(expr, 'num')
 
     def expr(self, e):
@@ -506,6 +534,7 @@ class DimScriptCompiler:
         self._out(f'{lhs} = {self.expr(rhs)};')
 
     def generate(self):
+        self._infer_returns()
         self.output = []
         self.indent = 0
         self._emit('#include "runtime.h"')

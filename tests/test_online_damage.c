@@ -56,7 +56,7 @@ int main(void) {
     frames(5);
 
     /* Лобби -> Онлайн */
-    tap((float)screen_w / 2, (float)screen_h / 2 + 94);
+    tap((float)screen_w / 2, (float)screen_h / 2 + 50);
     frames(40);
 
     /* Ждём, пока сеть отдаст слот и увидит поддельного соперника. */
