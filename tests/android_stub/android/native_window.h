@@ -1,0 +1,3 @@
+#ifndef DS_STUB_NATIVE_WINDOW_H
+#define DS_STUB_NATIVE_WINDOW_H
+#endif

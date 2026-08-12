@@ -3,6 +3,7 @@
 #endif
 #include <android_native_app_glue.h>
 #include "runtime.h"
+#include "net.h"
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -171,6 +172,9 @@ void android_main(struct android_app *app) {
     }
     app->onAppCmd = handle_cmd;
     app->onInputEvent = handle_input;
+    /* Сетевой слой ходит в Firebase через java.net.HttpURLConnection,
+     * поэтому ему нужна JavaVM этого процесса. */
+    net_set_java_vm(app->activity->vm);
     ds_log("DimScript application started");
     for (;;) {
         struct android_poll_source *source = NULL;
@@ -242,6 +246,7 @@ void android_main(struct android_app *app) {
     }
 }
 
-/* graphics.c встраивается в main.c, чтобы workflow остался без правок
+/* graphics.c и net.c встраиваются в main.c, чтобы workflow остался без правок
  * (собираем только main.c + runtime.c + game/game.c). */
 #include "graphics.c"
+#include "net.c"

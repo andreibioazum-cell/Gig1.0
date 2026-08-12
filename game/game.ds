@@ -1,7 +1,11 @@
-// Gig1.0 — Cubic Battle 4
-// Лобби со звёздами + бой: джойстик, прицел, пули, мультитач.
+// Gig1.0 — Кубическая битва
+// Лобби со звёздами, бой с ботом и онлайн-бой на двоих через Firebase.
+//
+// В онлайне каждый клиент отвечает только за себя: пишет в свою папку
+// координаты, поворот и здоровье, а чужую папку только читает. Урон себе
+// считает тоже каждый сам — поэтому спорить о попаданиях некому.
 
-num game_state = 0      // 0 — лобби, 1 — игра
+num game_state = 0      // 0 — лобби, 1 — бой с ботом, 2 — онлайн
 num t_dir = 0           // переход: 1 — затемнение, -1 — осветление, 0 — нет
 num t_target = 0
 num t_fade = 0
@@ -9,8 +13,17 @@ num t_fade = 0
 str GRASS = "grass.png"
 str TEX = "player.png"
 
+// Адрес базы и комната. Комната одна — в ней ровно двое: ты и соперник.
+str FIREBASE = "https://cubic-battle-3-default-rtdb.firebaseio.com"
+str ROOM = "main"
+
 num aim_range = 240     // длина прицела = дальность полёта пули
 num aim_fade = 90       // пуля плавно гаснет на последних 90 пикселях
+
+// Скорости в пикселях в секунду: кадры считаем через dt, а не по счётчику.
+num joy_speed = 192
+num bullet_speed = 780
+num bot_speed = 132
 
 // --- Сущности ---
 
@@ -27,7 +40,6 @@ object Enemy
     num x = 0
     num y = 0
     num size = 22
-    num speed = 2.2
     num hp = 3
     num max_hp = 3
     num angle = 0
@@ -39,22 +51,40 @@ object Bullet
     num dx = 0
     num dy = 0
     num r = 12
-    num speed = 13
     num traveled = 0
     num active = 0
+end
+
+// Соперник по сети. draw_* — сглаженные значения: сеть приходит 10 раз
+// в секунду, а рисуем мы каждый кадр, иначе чужой кубик дёргается.
+object Peer
+    num x = 0
+    num y = 0
+    num draw_x = 0
+    num draw_y = 0
+    num angle = 0
+    num draw_angle = 0
+    num size = 30
+    num hp = 10
+    num max_hp = 10
+    num ready = 0
 end
 
 Player player = new Player()
 Enemy enemy = new Enemy()
 Bullet bullet = new Bullet()
+Peer peer = new Peer()
+Bullet peer_bullet = new Bullet()
 
 num finished = 0        // 0 — бой, 1 — победа, 2 — поражение
-num joy_speed = 3.2
 num aiming = 0
 num atk_x = 0
 num atk_y = 0
 num joy_id = -1         // палец на джойстике (-1 — свободен)
 num aim_id = -1         // палец на кнопке атаки
+num placed = 0          // стартовая позиция расставлена по номеру слота
+num my_shot = 0         // номер моего выстрела, растёт на каждый выстрел
+num peer_shot = 0       // последний засчитанный выстрел соперника
 
 // --- Помощники отрисовки ---
 
@@ -71,7 +101,11 @@ function hud_bar num bx, num by, num w, num h, num cur, num max, col color, num 
     // Светлая рамка и тёмный фон хорошо читаются на траве без подписей.
     roundrect bx, by, w, h, h / 2, 0xDDFFFFFF
     roundrect bx + 3, by + 3, w - 6, h - 6, (h - 6) / 2, 0xDD171923
-    num fill_w = (w - 8) * cur / max
+    num shown = cur
+    if shown < 0
+        shown = 0
+    end
+    num fill_w = (w - 8) * shown / max
     if fill_w > 0
         if from_right == 1
             roundrect bx + w - 4 - fill_w, by + 4, fill_w, h - 8, (h - 8) / 2, color
@@ -87,30 +121,37 @@ function draw_lobby
     rect 0, 0, screen_w, screen_h, 0x1a1a2e
     update_stars
     draw_stars
-    ctext "Cubic Battle 4", screen_h / 2 - 100, 0xFFFFFF
-    button "Play", (screen_w - 240) / 2, screen_h / 2 + 20, 240, 76
+    ctext "Кубическая битва", screen_h / 2 - 130, 0xFFFFFF
+    button "Один", (screen_w - 240) / 2, screen_h / 2 - 40, 240, 76
+    button "Онлайн", (screen_w - 240) / 2, screen_h / 2 + 56, 240, 76
 end
 
 function touch_lobby num x, num y, num action
     // Запускаем игру уже при нажатии. Небольшой запас вокруг кнопки не даёт
     // случайному сдвигу пальца потерять обычный быстрый тап.
-    if x >= (screen_w - 276) / 2 && x <= (screen_w + 276) / 2 && y >= screen_h / 2 + 2 && y <= screen_h / 2 + 114
-        if action == 0 || action == 1
-            start_transition 1
-        end
+    if action != 0 && action != 1
+        return
+    end
+    if x < (screen_w - 276) / 2 || x > (screen_w + 276) / 2
+        return
+    end
+    if y >= screen_h / 2 - 58 && y <= screen_h / 2 + 34
+        start_transition 1
+    else if y >= screen_h / 2 + 38 && y <= screen_h / 2 + 150
+        start_transition 2
     end
 end
 
-// --- Логика боя ---
+// --- Общая подготовка боя ---
 
-function init_game
+function reset_battle
     player.x = screen_w / 2
     player.y = screen_h / 2
     player.angle = 0
     player.hp = player.max_hp
-    enemy.hp = enemy.max_hp
     finished = 0
     bullet.active = 0
+    peer_bullet.active = 0
     aiming = 0
     aim_id = -1
     joy.x = 130
@@ -119,7 +160,30 @@ function init_game
     atk_x = screen_w - 140
     atk_y = screen_h - 150
     drop_joy
+end
+
+function init_game
+    reset_battle
+    enemy.hp = enemy.max_hp
     spawn_enemy
+end
+
+function init_online
+    reset_battle
+    // Стартовые углы разводит номер слота, а его знает только сеть,
+    // поэтому позицию ставим в update_online при первом ответе базы.
+    placed = 0
+    peer.ready = 0
+    peer.hp = peer.max_hp
+    peer.x = screen_w - screen_w / 4
+    peer.y = screen_h / 2
+    peer.draw_x = peer.x
+    peer.draw_y = peer.y
+    peer.angle = 0
+    peer.draw_angle = 0
+    my_shot = 0
+    peer_shot = 0
+    net_connect FIREBASE, ROOM
 end
 
 function spawn_enemy
@@ -138,12 +202,10 @@ function spawn_enemy
     enemy.y = 50
 end
 
-function update_game
-    if finished != 0
-        return
-    end
-    player.x = player.x + joy.dx * joy_speed
-    player.y = player.y + joy.dy * joy_speed
+// Движение игрока джойстиком — общее для обоих режимов.
+function move_player
+    player.x = player.x + joy.dx * joy_speed * dt
+    player.y = player.y + joy.dy * joy_speed * dt
     if joy.dx != 0 || joy.dy != 0
         player.angle = atan2(joy.dy, joy.dx)
     end
@@ -159,14 +221,23 @@ function update_game
     if player.y > screen_h - player.size
         player.y = screen_h - player.size
     end
+end
+
+// --- Бой с ботом ---
+
+function update_game
+    if finished != 0
+        return
+    end
+    move_player
 
     // враг догоняет игрока; касание -1 жизнь, враг перерождается
     num dx = player.x - enemy.x
     num dy = player.y - enemy.y
     num dist = sqrt(dx * dx + dy * dy)
     if dist > 1
-        enemy.x = enemy.x + dx / dist * enemy.speed
-        enemy.y = enemy.y + dy / dist * enemy.speed
+        enemy.x = enemy.x + dx / dist * bot_speed * dt
+        enemy.y = enemy.y + dy / dist * bot_speed * dt
     end
     enemy.angle = atan2(dy, dx)
     if dist < player.size + enemy.size
@@ -182,22 +253,14 @@ function update_game
     if bullet.active == 0
         return
     end
-    bullet.x = bullet.x + bullet.dx * bullet.speed
-    bullet.y = bullet.y + bullet.dy * bullet.speed
-    bullet.traveled = bullet.traveled + bullet.speed
-    if bullet.traveled >= aim_range || bullet.x < -bullet.r || bullet.x > screen_w + bullet.r || bullet.y < -bullet.r || bullet.y > screen_h + bullet.r
-        bullet.active = 0
+    move_bullet bullet
+    if bullet.active == 0
         return
     end
     dx = enemy.x - bullet.x
     dy = enemy.y - bullet.y
     dist = sqrt(dx * dx + dy * dy)
-    num hit_r = bullet.r
-    num bullet_left = aim_range - bullet.traveled
-    if bullet_left < aim_fade
-        hit_r = bullet.r * bullet_left / aim_fade
-    end
-    if dist <= enemy.size + hit_r
+    if dist <= enemy.size + bullet_hit_r(bullet)
         bullet.active = 0
         enemy.hp = enemy.hp - 1
         // Единственная победная цель — полностью победить врага, таймера нет.
@@ -206,6 +269,146 @@ function update_game
         end
         return
     end
+end
+
+// --- Онлайн-бой ---
+
+function update_online
+    // Слот приходит из сети не сразу. Как только он известен, разводим
+    // бойцов по разным углам: слот 0 — слева, слот 1 — справа.
+    if placed == 0
+        num slot = net_slot()
+        if slot >= 0
+            if slot == 0
+                player.x = screen_w / 4
+            else
+                player.x = screen_w - screen_w / 4
+            end
+            player.y = screen_h / 2
+            placed = 1
+        end
+    end
+    // Своё состояние отправляем всегда: и в бою, и после его конца,
+    // иначе соперник решит, что мы отключились.
+    num alive = 1
+    if player.hp <= 0
+        alive = 0
+    end
+    net_publish player.x, player.y, player.angle, player.hp, alive
+    net_publish_bullet bullet.x, bullet.y, bullet.dx, bullet.dy, bullet.active, my_shot
+
+    read_peer
+
+    if finished != 0
+        return
+    end
+    // Пока соперника нет, бой не идёт: никто не стреляет и не получает урон.
+    if peer.ready == 0
+        return
+    end
+
+    move_player
+
+    // Моя пуля: попадание рисуем у себя, но здоровье соперника уменьшает
+    // он сам — так обе стороны никогда не спорят о результате.
+    if bullet.active == 1
+        move_bullet bullet
+    end
+    if bullet.active == 1
+        num bdx = peer.draw_x - bullet.x
+        num bdy = peer.draw_y - bullet.y
+        if sqrt(bdx * bdx + bdy * bdy) <= peer.size + bullet_hit_r(bullet)
+            bullet.active = 0
+        end
+    end
+
+    // Пуля соперника: сеть присылает только момент выстрела, дальше мы
+    // считаем полёт сами — на 10 пакетах в секунду она иначе телепортируется.
+    num shot = net_peer_bullet_shot()
+    if shot != peer_shot && net_peer_bullet_active() == 1
+        peer_shot = shot
+        peer_bullet.x = net_peer_bullet_x()
+        peer_bullet.y = net_peer_bullet_y()
+        peer_bullet.dx = net_peer_bullet_dx()
+        peer_bullet.dy = net_peer_bullet_dy()
+        peer_bullet.traveled = 0
+        peer_bullet.active = 1
+    end
+    if peer_bullet.active == 1
+        move_bullet peer_bullet
+    end
+    if peer_bullet.active == 1
+        num pdx = player.x - peer_bullet.x
+        num pdy = player.y - peer_bullet.y
+        if sqrt(pdx * pdx + pdy * pdy) <= player.size + bullet_hit_r(peer_bullet)
+            peer_bullet.active = 0
+            player.hp = player.hp - 1
+            if player.hp <= 0
+                player.hp = 0
+                net_publish player.x, player.y, player.angle, 0, 0
+                finish_game 2
+                return
+            end
+        end
+    end
+
+    if peer.hp <= 0
+        finish_game 1
+    end
+end
+
+// Читаем чужую папку и плавно подтягиваем к ней то, что рисуем.
+function read_peer
+    if net_peer_online() == 0
+        return
+    end
+    if net_peer_alive() == 1
+        peer.ready = 1
+    end
+    if peer.ready == 0
+        return
+    end
+    peer.x = net_peer_x()
+    peer.y = net_peer_y()
+    peer.angle = net_peer_angle()
+    peer.hp = net_peer_hp()
+
+    num k = dt * 12
+    if k > 1
+        k = 1
+    end
+    peer.draw_x = peer.draw_x + (peer.x - peer.draw_x) * k
+    peer.draw_y = peer.draw_y + (peer.y - peer.draw_y) * k
+
+    // Поворот сглаживаем по короткой дуге, иначе кубик крутится через круг.
+    num da = peer.angle - peer.draw_angle
+    loop da > 3.14159265
+        da = da - 6.2831853
+    end
+    loop da < -3.14159265
+        da = da + 6.2831853
+    end
+    peer.draw_angle = peer.draw_angle + da * k
+end
+
+// --- Пули ---
+
+function move_bullet Bullet b
+    b.x = b.x + b.dx * bullet_speed * dt
+    b.y = b.y + b.dy * bullet_speed * dt
+    b.traveled = b.traveled + bullet_speed * dt
+    if b.traveled >= aim_range || b.x < -b.r || b.x > screen_w + b.r || b.y < -b.r || b.y > screen_h + b.r
+        b.active = 0
+    end
+end
+
+// Радиус попадания уменьшается вместе с гаснущей пулей.
+function bullet_hit_r Bullet b
+    num left = aim_range - b.traveled
+    if left < aim_fade
+        return b.r * left / aim_fade
+    end
+    return b.r
 end
 
 function fire_bullet
@@ -217,6 +420,10 @@ function fire_bullet
     bullet.dy = dy
     bullet.traveled = 0
     bullet.active = 1
+    my_shot = my_shot + 1
+    if game_state == 2
+        net_publish_bullet bullet.x, bullet.y, dx, dy, 1, my_shot
+    end
 end
 
 function finish_game num result
@@ -224,10 +431,34 @@ function finish_game num result
     aiming = 0
     aim_id = -1
     bullet.active = 0
+    peer_bullet.active = 0
     drop_joy
 end
 
-function draw_game
+// --- Отрисовка боя ---
+
+function draw_bullet Bullet b
+    if b.active == 0
+        return
+    end
+    // В начале пуля крупная. На последних пикселях пути она одновременно
+    // гаснет и плавно уменьшается, поэтому не обрывается резко.
+    num left = aim_range - b.traveled
+    num a = 255
+    num bullet_scale = 1
+    if left < aim_fade
+        bullet_scale = left / aim_fade
+        a = floor(255 * bullet_scale)
+    end
+    if a < 1
+        a = 1
+    end
+    num draw_r = b.r * bullet_scale
+    circle b.x, b.y, draw_r, a * 0x1000000 + 0xFFF176
+    ring b.x, b.y, draw_r + 2 * bullet_scale, 2 * bullet_scale, a * 0x1000000 + 0xFFB300
+end
+
+function draw_field
     // фон — повторяющаяся текстура травы
     num y = 0
     loop y < screen_h
@@ -244,41 +475,14 @@ function draw_game
     if aiming == 1 && finished == 0
         num ax = cos(player.angle)
         num ay = sin(player.angle)
-        num tip_x = player.x + ax * aim_range
-        num tip_y = player.y + ay * aim_range
-        line player.x, player.y, tip_x, tip_y, 18, 0x66000000
+        line player.x, player.y, player.x + ax * aim_range, player.y + ay * aim_range, 18, 0x66000000
     end
 
-    // бойцы
     circle player.x, player.y, player.size / 2, 0xFF8844
     tex player.x - 20, player.y - 20, TEX, player.angle, 1
-    tex enemy.x - 20, enemy.y - 20, TEX, enemy.angle, 1
-    ring enemy.x, enemy.y, 26, 3, 0xFF2020
+end
 
-    // В начале пуля крупная. На последних пикселях пути она одновременно
-    // гаснет и плавно уменьшается, поэтому не обрывается резко.
-    if bullet.active == 1
-        num left = aim_range - bullet.traveled
-        num a = 255
-        num bullet_scale = 1
-        if left < aim_fade
-            bullet_scale = left / aim_fade
-            a = floor(255 * bullet_scale)
-        end
-        if a < 1
-            a = 1
-        end
-        num draw_r = bullet.r * bullet_scale
-        circle bullet.x, bullet.y, draw_r, a * 0x1000000 + 0xFFF176
-        ring bullet.x, bullet.y, draw_r + 2 * bullet_scale, 2 * bullet_scale, a * 0x1000000 + 0xFFB300
-    end
-
-    // HUD без текстовых счётчиков: здоровье игрока слева, врага справа.
-    num hud_w = screen_w / 4
-    hud_bar 20, 20, hud_w, 28, player.hp, player.max_hp, 0x7ED321, 0
-    hud_bar screen_w - hud_w - 20, 20, hud_w, 28, enemy.hp, enemy.max_hp, 0xE94560, 1
-
-    // интерфейс
+function draw_controls
     ring joy.x, joy.y, joy.r, 4, 0x000000
     circle joy.x + joy.ox, joy.y + joy.oy, 34, 0x000000
     if aiming == 1
@@ -287,21 +491,68 @@ function draw_game
         circle atk_x, atk_y, 70, 0xE94560
     end
     ring atk_x, atk_y, 70, 4, 0x000000
-    text_scaled "Attack", atk_x - text_ink_width("Attack") * 0.275, atk_y - 7, 0xFFFFFF, 0.55
-    button "Back", (screen_w - 120) / 2, 12, 120, 48
+    text_scaled "Огонь", atk_x - text_ink_width("Огонь") * 0.275, atk_y - 7, 0xFFFFFF, 0.55
+    button "Назад", (screen_w - 120) / 2, 12, 120, 48
+end
 
-    if finished != 0
-        rect 0, 0, screen_w, screen_h, 0x99000000
-        num panel_y = screen_h / 2 - 85
-        roundrect screen_w / 2 - 165, panel_y, 330, 170, 24, 0x5F10A0
-        if finished == 1
-            ctext "Victory!", panel_y + 34, 0xFFFFFF
-            ctext "Enemy defeated", panel_y + 75, 0xFFFFFF
-        else
-            ctext "Defeat", panel_y + 34, 0xFFFFFF
-            ctext "The enemy caught you", panel_y + 75, 0xFFFFFF
-        end
-        ctext "Tap to return", panel_y + 118, 0xFFCDD2
+function draw_result str title, str note
+    rect 0, 0, screen_w, screen_h, 0x99000000
+    num panel_y = screen_h / 2 - 85
+    roundrect screen_w / 2 - 165, panel_y, 330, 170, 24, 0x5F10A0
+    ctext title, panel_y + 34, 0xFFFFFF
+    ctext note, panel_y + 75, 0xFFFFFF
+    ctext "Нажмите, чтобы выйти", panel_y + 118, 0xFFCDD2
+end
+
+function draw_game
+    draw_field
+    tex enemy.x - 20, enemy.y - 20, TEX, enemy.angle, 1
+    ring enemy.x, enemy.y, 26, 3, 0xFF2020
+    draw_bullet bullet
+
+    // HUD без текстовых счётчиков: здоровье игрока слева, врага справа.
+    num hud_w = screen_w / 4
+    hud_bar 20, 20, hud_w, 28, player.hp, player.max_hp, 0x7ED321, 0
+    hud_bar screen_w - hud_w - 20, 20, hud_w, 28, enemy.hp, enemy.max_hp, 0xE94560, 1
+    draw_controls
+
+    if finished == 1
+        draw_result "Победа!", "Враг повержен"
+    else if finished == 2
+        draw_result "Поражение", "Враг вас догнал"
+    end
+end
+
+function draw_online
+    draw_field
+    if peer.ready == 1
+        tex peer.draw_x - 20, peer.draw_y - 20, TEX, peer.draw_angle, 1
+        ring peer.draw_x, peer.draw_y, 26, 3, 0xFF2020
+    end
+    draw_bullet bullet
+    draw_bullet peer_bullet
+
+    num hud_w = screen_w / 4
+    hud_bar 20, 20, hud_w, 28, player.hp, player.max_hp, 0x7ED321, 0
+    hud_bar screen_w - hud_w - 20, 20, hud_w, 28, peer.hp, peer.max_hp, 0xE94560, 1
+    draw_controls
+
+    // Строка состояния сети под кнопкой «Назад».
+    num status = net_status()
+    if status == 4
+        ctext "Нет соединения", 76, 0xFF8A80
+    else if status == 1
+        ctext "Подключение...", 76, 0xFFF176
+    else if peer.ready == 0
+        ctext "Ждём соперника...", 76, 0xFFF176
+    else if net_peer_online() == 0
+        ctext "Соперник отключился", 76, 0xFF8A80
+    end
+
+    if finished == 1
+        draw_result "Победа!", "Соперник повержен"
+    else if finished == 2
+        draw_result "Поражение", "Соперник оказался точнее"
     end
 end
 
@@ -352,7 +603,7 @@ function joy_touch num x, num y, num action, num id
     end
 end
 
-function touch_game num x, num y, num action, num id
+function touch_battle num x, num y, num action, num id
     if finished != 0
         if action == 0
             start_transition 0
@@ -366,7 +617,7 @@ function touch_game num x, num y, num action, num id
         drop_joy
         return
     end
-    // Кнопка Back с увеличенной невидимой зоной срабатывает сразу на down.
+    // Кнопка «Назад» с увеличенной невидимой зоной срабатывает сразу на down.
     // Up оставлен запасным вариантом на случай прерванного начала жеста.
     if x >= (screen_w - 156) / 2 && x <= (screen_w + 156) / 2 && y >= 0 && y <= 72
         if action == 0 || action == 1
@@ -382,7 +633,10 @@ function touch_game num x, num y, num action, num id
         if sqrt(adx * adx + ady * ady) <= 96
             aiming = 1
             aim_id = id
-            fire_bullet
+            // В онлайне стреляем только когда соперник действительно в бою.
+            if game_state == 1 || peer.ready == 1
+                fire_bullet
+            end
             return
         end
     end
@@ -409,9 +663,15 @@ function update_transition
         t_fade = t_fade + dt / 0.25
         if t_fade >= 1
             t_fade = 1
+            // Уходя из онлайна, освобождаем свой слот в комнате.
+            if game_state == 2 && t_target != 2
+                net_disconnect
+            end
             game_state = t_target
             if t_target == 1
                 init_game
+            else if t_target == 2
+                init_online
             end
             t_dir = -1
         end
@@ -434,14 +694,18 @@ function update
     update_transition
     if game_state == 1
         update_game
+    else if game_state == 2
+        update_online
     end
 end
 
 function draw
     if game_state == 0
         draw_lobby
-    else
+    else if game_state == 1
         draw_game
+    else
+        draw_online
     end
     // затемнение поверх во время перехода
     if t_fade > 0
@@ -456,6 +720,6 @@ function touch num x, num y, num action, num id
     if game_state == 0
         touch_lobby x, y, action
     else
-        touch_game x, y, action, id
+        touch_battle x, y, action, id
     end
 end

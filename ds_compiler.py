@@ -43,6 +43,13 @@ BUILTINS = frozenset({
     'sqrt', 'sin', 'cos', 'atan2', 'floor', 'rand',
     # звёзды фона лобби
     'init_stars', 'update_stars', 'draw_stars',
+    # онлайн: комната на двоих в Firebase (net.c)
+    'net_connect', 'net_disconnect', 'net_publish', 'net_publish_bullet',
+    'net_status', 'net_online', 'net_slot',
+    'net_peer_online', 'net_peer_x', 'net_peer_y', 'net_peer_angle',
+    'net_peer_hp', 'net_peer_alive',
+    'net_peer_bullet_active', 'net_peer_bullet_x', 'net_peer_bullet_y',
+    'net_peer_bullet_dx', 'net_peer_bullet_dy', 'net_peer_bullet_shot',
 })
 
 # Глобальные переменные хоста (read-only, кроме joy).
@@ -151,6 +158,7 @@ class DimScriptCompiler:
         self.objects = {}        # имя -> поля {имя: (тип, значение)}
         self.vars = {}           # глобальные переменные {имя: (тип, значение)}
         self.functions = {}      # имя -> (параметры [(тип, имя)], тело [строки])
+        self.func_ret = {}       # имя -> 'num', если функция возвращает значение
         self.top = []            # исполняемые строки верхнего уровня
         self.lines = []          # все строки исходника после include-склейки
         self.loaded_sources = [] # прочитанные файлы
@@ -247,6 +255,8 @@ class DimScriptCompiler:
             self._error(f"duplicate function '{name}'")
         else:
             self.functions[name] = (params, body)
+            if any(line.startswith('return ') for line in body):
+                self.func_ret[name] = 'num'
         return j
 
     def _parse_params(self, text):
@@ -255,7 +265,7 @@ class DimScriptCompiler:
             return params
         for part in split_top(text, ','):
             w = part.split()
-            if len(w) != 2 or w[0] not in TYPES:
+            if len(w) != 2 or (w[0] not in TYPES and w[0] not in self.objects):
                 self._error(f"invalid parameter '{part}'; expected 'type name'")
                 continue
             params.append((w[0], w[1]))
@@ -319,8 +329,10 @@ class DimScriptCompiler:
         if expr.startswith('"') and expr.endswith('"'):
             return 'str'
         m = re.match(r'^(' + _NAME + r')\.(' + _NAME + r')$', expr)
-        if m and m.group(1) in self.vars:
-            ot = self.vars[m.group(1)][0]
+        if m:
+            holder = m.group(1)
+            ot = self.scope.get(holder) or (
+                self.vars[holder][0] if holder in self.vars else None)
             fields = self.objects.get(ot)
             if fields and m.group(2) in fields:
                 return fields[m.group(2)][0]
@@ -343,8 +355,10 @@ class DimScriptCompiler:
         return self._fields(e)
 
     def _fields(self, e):
-        """Превращает obj.field в obj->field вне строковых литералов."""
+        """Превращает obj.field в obj->field вне строковых литералов.
+        Работает и для глобальных объектов, и для параметров-объектов."""
         names = [n for n in self.vars if self.vars[n][0] in self.objects]
+        names += [n for n, t in self.scope.items() if t in self.objects]
         for n in sorted(names, key=len, reverse=True):
             pat = re.compile(r'\b' + re.escape(n) + r'\.(' + _NAME + r')')
             repl = n + r'->\1'
@@ -362,7 +376,25 @@ class DimScriptCompiler:
                 start = m.end()
             out.append(e[start:])
             e = ''.join(out)
-        return e
+        return self._calls(e)
+
+    def _calls(self, e):
+        """Имя(...) пользовательской функции -> ds_fn_имя(...)."""
+        if not self.functions:
+            return e
+        _, quoted = scan(e)
+        pattern = re.compile(r'\b(' + _NAME + r')\s*\(')
+        out = []
+        start = 0
+        for m in pattern.finditer(e):
+            name = m.group(1)
+            if quoted[m.start()] or name not in self.functions:
+                continue
+            out.append(e[start:m.start()])
+            out.append('ds_fn_' + name + '(')
+            start = m.end()
+        out.append(e[start:])
+        return ''.join(out)
 
     def as_str(self, e):
         if self.expr_type(e) == 'str':
@@ -403,6 +435,9 @@ class DimScriptCompiler:
             return
         if line == 'return':
             self._out('return;')
+            return
+        if line.startswith('return '):
+            self._out(f'return {self.expr(line[7:])};')
             return
         d = self._decl(line)
         if d and d[0] in TYPES:
@@ -459,13 +494,14 @@ class DimScriptCompiler:
             self._error(f"'{lhs} = {rhs}': use 'Type name = new Type()'")
             return
         if field:
-            t = self.vars.get(name, ('', None))[0]
+            t = self.scope.get(name) or self.vars.get(name, ('', None))[0]
             if t not in self.objects and ENGINE_VARS.get(name) != 'joy':
                 self._error(f"unknown object '{name}'")
                 return
         elif name not in self.scope and name not in self.vars and name not in ENGINE_VARS:
             self._error(f"unknown variable '{name}'")
-        if field and self.vars.get(name, ('', None))[0] in self.objects:
+        holder_type = self.scope.get(name) or self.vars.get(name, ('', None))[0]
+        if field and holder_type in self.objects:
             lhs = self._fields(lhs)
         self._out(f'{lhs} = {self.expr(rhs)};')
 
@@ -473,6 +509,7 @@ class DimScriptCompiler:
         self.output = []
         self.indent = 0
         self._emit('#include "runtime.h"')
+        self._emit('#include "net.h"')
         self._emit('#include <math.h>')
         self._emit('')
         # структуры объектов
@@ -505,7 +542,7 @@ class DimScriptCompiler:
             self._emit('')
         # прототипы функций
         for n, (params, _b) in self.functions.items():
-            self._emit(f'static void ds_fn_{n}({self._params_c(params)});')
+            self._emit(f'static {self._ret_c(n)} ds_fn_{n}({self._params_c(params)});')
         if self.functions:
             self._emit('')
         # конструкторы и деструкторы
@@ -522,7 +559,7 @@ class DimScriptCompiler:
             self._emit('')
         # функции
         for n, (params, body) in self.functions.items():
-            self._emit(f'static void ds_fn_{n}({self._params_c(params)}) {{')
+            self._emit(f'static {self._ret_c(n)} ds_fn_{n}({self._params_c(params)}) {{')
             self.indent = 1
             self.scope = {pn: pt for pt, pn in params}
             self.blocks = []
@@ -605,6 +642,9 @@ class DimScriptCompiler:
         else:
             self._out('(void)x; (void)y; (void)action; (void)pointer_id;')
         self._emit('}')
+
+    def _ret_c(self, name):
+        return self.c_type(self.func_ret[name]) if name in self.func_ret else 'void'
 
     def _params_c(self, params):
         if not params:
