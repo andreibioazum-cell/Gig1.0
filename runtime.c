@@ -438,14 +438,81 @@ static int kb_show = 0;
 static int kb_enter = 0;
 
 void ds_set_activity(void *act){ kb_activity = (ANativeActivity*)act; }
+
+/* ANativeActivity_showSoftInput с NativeActivity почти никогда не работает
+ * (известный баг: окно без фокусируемого View). Поэтому клавиатуру
+ * открываем/закрываем напрямую через JNI:
+ *   показать — InputMethodManager.toggleSoftInput(SHOW_FORCED, 0)
+ *   скрыть   — InputMethodManager.hideSoftInputFromWindow(token, 0)   */
+static int kb_ime(int show){
+    JNIEnv *env=NULL; JavaVM *vm; int attached=0; int ok=0;
+    if(!kb_activity || !kb_activity->vm || !kb_activity->clazz) return 0;
+    vm = kb_activity->vm;
+    if((*vm)->GetEnv(vm,(void**)&env,JNI_VERSION_1_6)!=JNI_OK){
+        if((*vm)->AttachCurrentThread(vm,&env,NULL)!=JNI_OK) return 0;
+        attached=1;
+    }
+    if((*env)->PushLocalFrame(env,16)!=0){ if(attached)(*vm)->DetachCurrentThread(vm); return 0; }
+    {
+        jobject activity = kb_activity->clazz;
+        jclass act_cls = (*env)->GetObjectClass(env,activity);
+        jmethodID get_svc = (*env)->GetMethodID(env,act_cls,"getSystemService","(Ljava/lang/String;)Ljava/lang/Object;");
+        jstring svc_name; jobject imm; jclass imm_cls;
+        if(!get_svc) goto done;
+        svc_name = (*env)->NewStringUTF(env,"input_method");
+        if(!svc_name) goto done;
+        imm = (*env)->CallObjectMethod(env,activity,get_svc,svc_name);
+        if((*env)->ExceptionCheck(env) || !imm) goto done;
+        imm_cls = (*env)->GetObjectClass(env,imm);
+        if(show){
+            /* SHOW_FORCED=2 + HIDE_IMPLICIT_ONLY=1: клавиатура выезжает даже без
+             * фокусного View, а повторный вызов «показать» её НЕ прячет
+             * (toggle не скрывает явно показанную клавиатуру). */
+            jmethodID toggle = (*env)->GetMethodID(env,imm_cls,"toggleSoftInput","(II)V");
+            if(!toggle) goto done;
+            (*env)->CallVoidMethod(env,imm,toggle,(jint)2,(jint)1);
+            if((*env)->ExceptionCheck(env)) goto done;
+            ok=1;
+        } else {
+            jmethodID get_win = (*env)->GetMethodID(env,act_cls,"getWindow","()Landroid/view/Window;");
+            jobject window; jclass win_cls; jmethodID get_decor; jobject decor;
+            jclass view_cls; jmethodID get_tok; jobject token; jmethodID hide;
+            if(!get_win) goto done;
+            window = (*env)->CallObjectMethod(env,activity,get_win);
+            if((*env)->ExceptionCheck(env) || !window) goto done;
+            win_cls = (*env)->GetObjectClass(env,window);
+            get_decor = (*env)->GetMethodID(env,win_cls,"getDecorView","()Landroid/view/View;");
+            if(!get_decor) goto done;
+            decor = (*env)->CallObjectMethod(env,window,get_decor);
+            if((*env)->ExceptionCheck(env) || !decor) goto done;
+            view_cls = (*env)->GetObjectClass(env,decor);
+            get_tok = (*env)->GetMethodID(env,view_cls,"getWindowToken","()Landroid/os/IBinder;");
+            if(!get_tok) goto done;
+            token = (*env)->CallObjectMethod(env,decor,get_tok);
+            if((*env)->ExceptionCheck(env)) goto done;
+            hide = (*env)->GetMethodID(env,imm_cls,"hideSoftInputFromWindow","(Landroid/os/IBinder;I)Z");
+            if(!hide) goto done;
+            (*env)->CallBooleanMethod(env,imm,hide,token,(jint)0);
+            if((*env)->ExceptionCheck(env)) goto done;
+            ok=1;
+        }
+    }
+done:
+    if((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+    (*env)->PopLocalFrame(env,NULL);
+    if(attached) (*vm)->DetachCurrentThread(vm);
+    return ok;
+}
 void keyboard_show(void){
     if(!kb_activity) return;
-    ANativeActivity_showSoftInput(kb_activity, ANATIVEACTIVITY_SHOW_SOFT_INPUT_FORCED);
+    if(!kb_ime(1)) /* запасной путь, если JNI недоступен */
+        ANativeActivity_showSoftInput(kb_activity, ANATIVEACTIVITY_SHOW_SOFT_INPUT_FORCED);
     kb_show = 1;
 }
 void keyboard_hide(void){
     if(!kb_activity) return;
-    ANativeActivity_hideSoftInput(kb_activity, ANATIVEACTIVITY_HIDE_SOFT_INPUT_IMPLICIT_ONLY);
+    if(!kb_ime(0))
+        ANativeActivity_hideSoftInput(kb_activity, ANATIVEACTIVITY_HIDE_SOFT_INPUT_IMPLICIT_ONLY);
     kb_show = 0;
 }
 const char* keyboard_get_text(void){ return ds_track_string(ds_strdup(kb_text)); }

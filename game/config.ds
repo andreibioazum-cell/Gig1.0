@@ -2,6 +2,8 @@
 // удар ближнего боя: без пуль, только чёрный полупрозрачный хитбокс-прицел и спрайт удара
 // punch_cooldown — пауза между ударами, aim_fade_* — быстрое плавное появление/угасание хитбокса
 // Хитбокс меньше спрайта и поворачивается по направлению игрока.
-// player_scale — игрок (и сетевые игроки) крупнее бота в бою
-num game_state=0, language=0, t_dir=0, t_target=0, t_fade=0, transition_duration=0.15, punch_time=0.2, punch_cooldown=0.3, punch_reach=96, punch_width=96, punch_damage=1, joy_speed=192, bot_speed=132, btn_w=280, btn_h=64, back_y=32, online_ready=0, max_players=4, pi=3.1415926535, console_scroll=0, cube_scale=1, player_scale=1.5, aim_fade_in=0.05, aim_fade_out=0.1
+// player_scale — игрок (и сетевые игроки) крупнее бота в бою, enemy_scale — размер бота
+// ИИ бота: bot_range — дистанция удара, bot_keep — минимальная дистанция,
+// bot_windup — замах перед ударом, bot_recover — пауза между ударами бота
+num game_state=0, language=0, t_dir=0, t_target=0, t_fade=0, transition_duration=0.15, punch_time=0.2, punch_cooldown=0.3, punch_reach=110, punch_width=110, punch_damage=1, joy_speed=192, bot_speed=150, bot_range=100, bot_keep=64, bot_windup=0.28, bot_recover=1.1, btn_w=280, btn_h=64, back_y=32, online_ready=0, max_players=4, pi=3.1415926535, console_scroll=0, cube_scale=1, player_scale=2, enemy_scale=1.4, aim_fade_in=0.05, aim_fade_out=0.1
 str GRASS="grass.png", ORDINARY_TEX="ordinary.png", PUNCH_TEX="ordinary_punch.png", FIREBASE="https://cubicbattleserver-19ae2-default-rtdb.firebaseio.com", ROOM="main"

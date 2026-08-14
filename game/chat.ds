@@ -1,20 +1,20 @@
-num chat_open=0, chat_scroll=0
+num chat_open=0
 str chat_input=""
 // chat.ds — отдельный модуль онлайн чата, не в battle.ds
-// сообщения слева сверху, сама кнопка чата — чуть ниже сообщений
-// и в том же стиле, что и все остальные кнопки (button из ui.ds).
-// Ввод — обычная системная клавиатура Android: она поддерживает любую
-// раскладку, включая кириллицу и японский язык.
+// Пока чат закрыт — сообщений на экране НЕТ, видна только кнопка чата.
+// Внутри чата нет кнопок «вверх/вниз» и «клавиатура»: системная клавиатура
+// Android открывается сама при входе в чат и по нажатию на поле
+// «Введите сообщение...». Enter или «Отправить» — отправка.
 
 function chat_button str label, num x, num y, num w, num h
-// кнопка в стиле обычных кнопок: фиолетовый roundrect и белый текст
+// кнопка в стиле обычных кнопок: фиолетовый roundrect и белый текст,
+// текст центрируется через text_in_box — ничего не уезжает вверх
 roundrect x,y,w,h,20,0x5F10A0
-num tw=text_ink_width(label)*0.5, th=text_ink_height(label)*0.5, tt=text_ink_top(label)*0.5
-text_scaled label,x+(w-tw)/2,y+(h-th)/2-tt,0xFFFFFF,0.5
+text_in_box label,x+(w-text_ink_width(label)*0.5)/2,y,h,0xFFFFFF,0.5
 end
 function chat_send
 // отправка текста в Firebase (Enter, кнопка «Отправить»)
-if str_len(chat_input)==0; return; end; net_chat_send chat_input; ds_log "chat: %s",chat_input; chat_input=""; keyboard_clear; chat_scroll=0
+if str_len(chat_input)==0; return; end; net_chat_send chat_input; ds_log "chat: %s",chat_input; chat_input=""; keyboard_clear
 end
 function uid_short num idx
 // первые 6 символов uid — компактная подпись вместо длинного хекса
@@ -26,44 +26,36 @@ end
 function draw_chat
 if game_state!=5; return; end
 if chat_open==0
-// мини-режим: сообщения слева сверху, кнопка чата чуть ниже
-num cc=net_chat_count(), i=cc-4, dy=56; if i<0; i=0; end
-loop i<cc; str t=net_chat_text(i); if str_len(t)>0; text_scaled t,16,dy,0xE0E0FF,0.45; dy=dy+22; end; i=i+1; end
-button tr_chat(),16,150,140,48
+// чат закрыт: сообщения скрыты, видна только кнопка чата
+button tr_chat(),16,64,140,48
 return
 end
 // полный экран чата
 rect 0,0,screen_w,screen_h,0xDD0F0F1A
 num pw=screen_w-40, ph=screen_h-40, px=20, py=20
 roundrect px,py,pw,ph,18,0xFF1E1E2F
-ctext tr_online_chat(),py+14,0xFFFFFF
-num lx=px+16, lw=pw-32, lwd=lw-168, ly=py+50, lh=ph-160, line_h=26, maxl=floor(lh/line_h), total=net_chat_count(), start=total-maxl-chat_scroll
+ctext tr_online_chat(),py+22,0xFFFFFF
+chat_button tr_close(),px+pw-158,py+12,142,44
+num lx=px+16, lw=pw-32, ly=py+70, iy=py+ph-68, ih=52, lh=iy-ly-12, line_h=26, maxl=floor(lh/line_h), total=net_chat_count(), start=total-maxl
 if start<0; start=0; end
 if total==0
-text_scaled tr_no_messages(),lx,ly,0x8888AA,0.5
+text_in_box tr_no_messages(),lx,ly,line_h,0x8888AA,0.5
 else
 num idx=start, yy=ly
 loop idx<total
-if yy+line_h>ly+lh; idx=total
-else
 str line=uid_short(idx)+": "+net_chat_text(idx)
-if text_ink_width(line)>lwd-8; line=net_chat_text(idx); end
-text_scaled line,lx,yy,0xE0E0FF,0.5; yy=yy+line_h; idx=idx+1
+if text_ink_width(line)*0.5>lw-8; line=net_chat_text(idx); end
+text_in_box line,lx,yy,line_h,0xE0E0FF,0.5; yy=yy+line_h; idx=idx+1
 end
 end
-end
-roundrect px+pw-50,py+50,34,34,10,0x5F10A0; text "^",px+pw-38,py+54,0xFFFFFF
-roundrect px+pw-50,py+94,34,34,10,0x5F10A0; text "v",px+pw-38,py+98,0xFFFFFF
-num rx=px+pw-160, rw=144
-chat_button tr_close(),rx,py+150,rw,44
-chat_button tr_keyboard(),rx,py+200,rw,44
-num iy=py+ph-90, ih=52
-roundrect lx,iy,lw-116,ih,10,0xFF2A2A40
+// поле ввода: текст и подсказка центрированы по высоте поля,
+// «Type a message...» больше никуда не съезжает
+roundrect lx,iy,lw-124,ih,10,0xFF2A2A40
 str raw=keyboard_get_raw(); if str_eq(raw,chat_input)==0; chat_input=keyboard_get_text(); end
 if keyboard_enter_pressed()==1; chat_send; end
-if str_len(chat_input)==0; text_scaled tr_type_message(),lx+10,iy+10,0x666688,0.55
-else; text_scaled chat_input,lx+10,iy+10,0xFFFFFF,0.55; end
-chat_button tr_send(),lx+lw-110,iy,110,48
+if str_len(chat_input)==0; text_in_box tr_type_message(),lx+12,iy,ih,0x666688,0.55
+else; text_in_box chat_input,lx+12,iy,ih,0xFFFFFF,0.55; end
+chat_button tr_send(),lx+lw-112,iy,112,ih
 end
 function chat_hit num x, num y, num bx, num by, num bw, num bh
 // проверка попадания в кнопку
@@ -71,15 +63,12 @@ if x>=bx&&x<=bx+bw&&y>=by&&y<=by+bh; return 1; end; return 0
 end
 function touch_chat num x, num y, num action
 if action!=0; return 0; end
-if chat_open==0; if chat_hit(x,y,16,150,140,48)==1; chat_open=1; keyboard_show; return 1; end; return 0; end
+if chat_open==0; if chat_hit(x,y,16,64,140,48)==1; chat_open=1; keyboard_show; return 1; end; return 0; end
 num pw=screen_w-40, ph=screen_h-40, px=20, py=20, lx=px+16, lw=pw-32
-if chat_hit(x,y,px+pw-50,py+50,34,34)==1; chat_scroll=chat_scroll+1; if chat_scroll>net_chat_count(); chat_scroll=net_chat_count(); end; return 1; end
-if chat_hit(x,y,px+pw-50,py+94,34,34)==1; chat_scroll=chat_scroll-1; if chat_scroll<0; chat_scroll=0; end; return 1; end
-num rx=px+pw-160, rw=144
-if chat_hit(x,y,rx,py+150,rw,44)==1; chat_open=0; keyboard_hide; return 1; end
-if chat_hit(x,y,rx,py+200,rw,44)==1; if keyboard_visible()==1; keyboard_hide; else; keyboard_show; end; return 1; end
-num iy=py+ph-90, ih=52
-if chat_hit(x,y,lx,iy,lw-116,ih)==1; keyboard_show; return 1; end
-if chat_hit(x,y,lx+lw-110,iy,110,48)==1; chat_send; return 1; end
+if chat_hit(x,y,px+pw-158,py+12,142,44)==1; chat_open=0; keyboard_hide; return 1; end
+num iy=py+ph-68, ih=52
+// нажатие на «Введите сообщение...» открывает системную клавиатуру
+if chat_hit(x,y,lx,iy,lw-124,ih)==1; keyboard_show; return 1; end
+if chat_hit(x,y,lx+lw-112,iy,112,ih)==1; chat_send; return 1; end
 return 1
 end

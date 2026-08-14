@@ -67,9 +67,6 @@ end
 function tr_close
 if language==1; return "Закрыть"; else if language==2; return "閉じる"; end; return "Close"
 end
-function tr_keyboard
-if language==1; return "Клавиатура"; else if language==2; return "キーボード"; end; return "Keyboard"
-end
 function tr_type_message
 if language==1; return "Введите сообщение..."; else if language==2; return "メッセージを入力..."; end; return "Type a message..."
 end

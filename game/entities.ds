@@ -4,7 +4,7 @@ object Player
 num x=0, y=0, size=30, angle=0, hp=10, max_hp=10
 end
 object Enemy
-num x=0, y=0, size=30, hp=3, max_hp=3, angle=0
+num x=0, y=0, size=30, hp=3, max_hp=3, angle=0, atk_cd=0, wind=0, atk_left=0, pdx=0, pdy=0, ph=0, strafe=1, think=0
 end
 object Punch
 num x=0, y=0, dx=0, dy=0, active=0, ox=0, oy=0, shot=0, tr=0, hit=0
