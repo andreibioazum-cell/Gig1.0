@@ -9,6 +9,12 @@
  *   punchy — игрок стоит и спамит удар (бот должен наказывать промахи);
  *   runner — игрок бегает по кругу (бот должен догонять и попадать).
  *
+ * Заодно следит за спрайтом бота: в свободном движении (state 0/3/4) угол
+ * спрайта обязан совпадать с вектором скорости (смотрит, куда идёт, а не
+ * пялится на игрока), а сам угол меняется плавно — без мгновенных скачков.
+ * Разворот к игроку допустим только в замахе/ударе (state 1/2), иначе цель
+ * удара не совпадёт с проверкой попадания.
+ *
  * Сборка: см. test/run_ai_sim.sh
  */
 #ifndef _POSIX_C_SOURCE
@@ -32,6 +38,10 @@ extern double finished;
 #define E_X 0
 #define E_Y 1
 #define E_HP 3
+#define E_ANGLE 5
+#define E_STATE 6
+#define E_MVX 19
+#define E_MVY 20
 
 static uint32_t *g_pixels = NULL;
 static int g_w = 1280, g_h = 720;
@@ -111,7 +121,17 @@ typedef struct {
     double taken;       /* попаданий игрока по боту */
     double seconds;
     int bot_wins, player_wins;
+    int move_frames;    /* кадры свободного движения бота (state 0/3/4) */
+    int face_aligned;   /* из них — голова по вектору скорости */
+    double worst_jerk;  /* макс. скачок угла за кадр внутри одного состояния */
 } Result;
+
+static double wrapd(double a) {
+    const double pi = 3.14159265358979323846;
+    while (a > pi) a -= 2 * pi;
+    while (a < -pi) a += 2 * pi;
+    return a;
+}
 
 /* mode: 0 idle, 1 punchy, 2 runner, 3 chaser (идёт на бота и бьёт в упор) */
 static Result run_case(const char *name, int mode, double seconds) {
@@ -121,6 +141,7 @@ static Result run_case(const char *name, int mode, double seconds) {
     double php = pl[P_HP], ehp = en[E_HP];
     int frames = (int)(seconds * 60.0);
     int atk_x = g_w - 140, atk_y = g_h - 150;
+    double prev_angle = en[E_ANGLE], prev_st = -1;
     for (int f = 0; f < frames; f++) {
         if (mode == 1 && f % 24 == 0) do_tap((float)atk_x, (float)atk_y);
         if (mode == 3) {
@@ -138,6 +159,20 @@ static Result run_case(const char *name, int mode, double seconds) {
         }
         run_frames(1);
         if (!script_active) break;
+        {
+            double st = en[E_STATE], ang = en[E_ANGLE];
+            double mvx = en[E_MVX], mvy = en[E_MVY];
+            double sp = sqrt(mvx * mvx + mvy * mvy);
+            if ((st == 0 || st == 3 || st == 4) && sp > 10) {
+                r.move_frames++;
+                if (fabs(wrapd(ang - atan2(mvy, mvx))) < 0.5) r.face_aligned++;
+                if (st == prev_st) {
+                    double jump = fabs(wrapd(ang - prev_angle));
+                    if (jump > r.worst_jerk) r.worst_jerk = jump;
+                }
+            }
+            prev_angle = ang; prev_st = st;
+        }
         if (pl[P_HP] < php) {
             r.hits += php - pl[P_HP];
             php = pl[P_HP];
@@ -150,6 +185,8 @@ static Result run_case(const char *name, int mode, double seconds) {
             if (!restart_round()) break;
             pl = (double *)player; en = (double *)enemy;
             php = pl[P_HP]; ehp = en[E_HP];
+            /* между боями лобби-кадры: угол со старого боя сравнивать нельзя */
+            prev_angle = en[E_ANGLE]; prev_st = -1;
         }
     }
     if (mode >= 2) touch_at((float)130, (float)(g_h - 150), 1, 7);
@@ -165,12 +202,33 @@ int main(void) {
     rs[1] = run_case("punchy", 1, 20.0);
     rs[2] = run_case("runner", 2, 20.0);
     rs[3] = run_case("chaser", 3, 60.0);
-    printf("%-8s %10s %12s %14s %10s\n", "case", "first hit", "bot hits/s", "player hits/s", "rounds W-L");
+    printf("%-8s %10s %12s %14s %10s %13s %11s\n", "case", "first hit", "bot hits/s",
+           "player hits/s", "rounds W-L", "face aligned", "angle jerk");
     for (int i = 0; i < 4; i++) {
-        printf("%-8s %9.2fs %12.2f %14.2f %7d-%d\n", rs[i].name,
+        printf("%-8s %9.2fs %12.2f %14.2f %7d-%d %12.0f%% %9.1fd\n", rs[i].name,
                rs[i].first_hit, rs[i].hits / rs[i].seconds, rs[i].taken / rs[i].seconds,
-               rs[i].bot_wins, rs[i].player_wins);
+               rs[i].bot_wins, rs[i].player_wins,
+               rs[i].move_frames ? 100.0 * rs[i].face_aligned / rs[i].move_frames : 0.0,
+               rs[i].worst_jerk * 180.0 / 3.14159265358979323846);
     }
+    /* Спрайт бота в движении смотрит по вектору скорости (не на игрока) и
+     * поворачивается плавно: worst_jerk ограничен шагом enemy_face_speed —
+     * pi*14/60 ~= 42 градуса за кадр (первый шаг разворота при обходе). */
+    for (int i = 0; i < 4; i++) {
+        if (rs[i].move_frames > 50) {
+            double ratio = (double)rs[i].face_aligned / rs[i].move_frames;
+            if (ratio < 0.7) {
+                printf("!! bot faces its movement only %.0f%% of the time (%s)\n", ratio * 100, rs[i].name);
+                return 1;
+            }
+            if (rs[i].worst_jerk > 0.8) {
+                printf("!! bot rotation snaps: worst per-frame jump %.2f rad (%s)\n",
+                       rs[i].worst_jerk, rs[i].name);
+                return 1;
+            }
+        }
+    }
+    printf("=== bot faces its movement direction, rotation is smooth\n");
     reset();
     free(g_pixels);
     return 0;

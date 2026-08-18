@@ -154,6 +154,11 @@ public final class GameActivity extends NativeActivity {
         // Android does not send a direct callback when the user dismisses an IME
         // with the system Back gesture. Track an actual visible->hidden transition;
         // importantly, do not report "hidden" during the short show request delay.
+        // Когда клавиатуру смахнули, сообщаем игре ВСЕГДА, даже если поле ещё
+        // «хочет» ввод (wantKeyboard=true). Иначе нативный флаг видимости
+        // навсегда застревал в «открыто»: повторный тап по полю считал IME уже
+        // показанной и не переоткрывал её, а ввод шёл в никуда — поле выглядело
+        // мёртвым (именно это ломало ввод ника).
         chatEditor.getRootView().getViewTreeObserver().addOnGlobalLayoutListener(
                 new ViewTreeObserver.OnGlobalLayoutListener() {
                     @Override
@@ -169,7 +174,7 @@ public final class GameActivity extends NativeActivity {
                             keyboardWasVisible = true;
                         } else if (keyboardWasVisible) {
                             keyboardWasVisible = false;
-                            if (!wantKeyboard) keyboardHiddenNative();
+                            keyboardHiddenNative();
                         }
                     }
                 });

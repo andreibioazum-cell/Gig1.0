@@ -24,6 +24,10 @@ num enemy_min_distance=70, enemy_punch_reach=104, enemy_punch_width=104, enemy_w
 // enemy_still_speed — порог «игрок стоит», enemy_punish_react — задержка,
 // с которой бот замечает промах игрока и идёт наказывать.
 num enemy_lead=0.15, enemy_hit_margin=12, enemy_close_gain=4.5, enemy_flank_time=0.9, enemy_still_speed=25, enemy_punish_react=0.05
+// Плавность бота: enemy_move_smooth — насколько быстро скорость обхода
+// подтягивается к новой цели (убирает рывки при смене стороны), enemy_face_speed —
+// скорость разворота спрайта к направлению движения. Оба — доля в секунду для lerp.
+num enemy_move_smooth=18, enemy_face_speed=14
 // Экран ника: вход в онлайн спрашивает только ник, без пароля и регистрации.
 // login_field — 1, когда поле ника в фокусе (открывается сразу), login_status: 0=идл, 5=неверный ник,
 // login_after — куда перейти после ника (0=лобби, 5=онлайн).
@@ -32,7 +36,7 @@ num login_field=0, login_status=0, login_after=0
 // поля ввода, login_lab — отступ подписи «Ник» над полем (больше = выше),
 // login_lab_ox — сдвиг этой подписи вправо.
 num login_ox=10, login_oy=-26, login_fh=54, login_lab=40, login_lab_ox=16
-str GRASS="grass.png", ORDINARY_TEX="ordinary.png", PUNCH_TEX="ordinary_punch.png", AZUM_TEX="azum.png", AZUM_PUNCH_TEX="azum_punch.png", COLUMN="Column.png", FIREBASE="https://cubicbattleserver-19ae2-default-rtdb.firebaseio.com", ROOM="main", login_nick="", last_kb=""
+str GRASS="grass.png", ORDINARY_TEX="ordinary.png", PUNCH_TEX="ordinary_punch.png", AZUM_TEX="azum.png", AZUM_PUNCH_TEX="azum_punch.png", COLUMN="Column.png", FIREBASE="https://cubicbattleserver-19ae2-default-rtdb.firebaseio.com", ROOM="main", login_nick=""
 // Диско-ивент из Firebase: event_mode=1 — «диско» включено (всё мигает),
 // disco_safe=1 — безопасный для эпилептиков режим (мигание выключено),
 // disco_t — таймер для плавной смены цветов.

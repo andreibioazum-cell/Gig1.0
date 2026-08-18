@@ -210,7 +210,7 @@ static int wait_slot(int max_iters) {
 static void tap_nick(void) { do_tap((float)(g_w / 2), (float)(FY + 27)); }
 static void tap_nick_go(void) { do_tap((float)(g_w / 2), (float)(FY + 54 + 40 + 32)); }
 
-/* Заполнить поле заново: тап (переключение поля чистит клавиатуру), затем текст */
+/* Заполнить поле заново: сначала тап по полю, затем очистка и ввод текста */
 static void fill_field(void (*tap)(void), const char *text) {
     tap();
     run_frames(5);
@@ -316,6 +316,24 @@ int main(void) {
         return 3;
     }
     printf("=== nick field accepts typing without a tap\n");
+
+    /* Клавиатуру смахнули жестом, пока поле активно (на Android именно так
+     * ломался ввод ника: флаг видимости залипал, тап клавиатуру не возвращал).
+     * Тап по полю обязан заново открыть IME и не потерять набранное. */
+    keyboard_hide();
+    run_frames(5);
+    if (keyboard_visible()) { printf("!! keyboard did not hide\n"); return 3; }
+    tap_nick();
+    run_frames(5);
+    if (!keyboard_visible()) { printf("!! tap on the field did not reopen the keyboard\n"); return 3; }
+    feed_text("StillHere");
+    run_frames(5);
+    if (!login_nick || strcmp(login_nick, "TypeMeStillHere") != 0) {
+        printf("!! typed text lost after keyboard reopen: '%s' (expected 'TypeMeStillHere')\n",
+               login_nick ? login_nick : "(null)");
+        return 3;
+    }
+    printf("=== keyboard reopen on tap keeps the typed text\n");
     keyboard_clear();
     run_frames(5);
 

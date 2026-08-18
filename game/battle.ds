@@ -25,7 +25,7 @@ if revive_prot>0; revive_prot=revive_prot-dt; if revive_prot<0; revive_prot=0; e
 end
 function reset_battle
 // сброс игрока в центр, очистка ударов и ремоутов
-player.x=screen_w/2; player.y=screen_h/2; player.angle=0; player.hp=player.max_hp; player.size=25*player_scale; enemy.size=25*enemy_scale; enemy.state=0; enemy.state_time=0; enemy.cooldown=0; enemy.hit=0; enemy.dodge_cd=0; enemy.think=0; finished=0; punch.active=0; punch.hit=0; punch_left=0; punch_cd=0; aim_id=-1; aim_a=0
+player.x=screen_w/2; player.y=screen_h/2; player.angle=0; player.hp=player.max_hp; player.size=25*player_scale; enemy.size=25*enemy_scale; enemy.state=0; enemy.state_time=0; enemy.cooldown=0; enemy.hit=0; enemy.dodge_cd=0; enemy.think=0; enemy.mvx=0; enemy.mvy=0; enemy.svx=0; enemy.svy=0; finished=0; punch.active=0; punch.hit=0; punch_left=0; punch_cd=0; aim_id=-1; aim_a=0
 azum_revived=0; revive_flash=0; revive_prot=0
 joy.x=130; joy.y=screen_h-150; joy.r=70; atk_x=screen_w-140; atk_y=screen_h-150; drop_joy
 arr_clear remotes; arr_clear remote_punches
@@ -48,7 +48,7 @@ loop i<50
 enemy.x=margin+rand()%(screen_w-140); enemy.y=margin+rand()%(screen_h-140)
 if dist(enemy.x,enemy.y,player.x,player.y)>280; i=50; else; i=i+1; end
 end
-enemy.state=0; enemy.state_time=0; enemy.cooldown=enemy_first_delay; enemy.hit=0; enemy.dodge_cd=0; enemy.think=0
+enemy.state=0; enemy.state_time=0; enemy.cooldown=enemy_first_delay; enemy.hit=0; enemy.dodge_cd=0; enemy.think=0; enemy.mvx=0; enemy.mvy=0; enemy.svx=0; enemy.svy=0
 if rand()%2==0; enemy.strafe=-1; else; enemy.strafe=1; end
 end
 function sprite_a num a
@@ -93,12 +93,26 @@ if punch_left<=0; return; end
 punch.x=player.x; punch.y=player.y; punch.dx=cos(player.angle); punch.dy=sin(player.angle)
 end
 function enemy_move num vx, num vy
-// Единое перемещение ИИ с учётом границ экрана.
+// Единое перемещение ИИ с учётом границ экрана. Запоминаем фактическую
+// скорость кадра: по mvx/mvy спрайт разворачивается в сторону движения,
+// svx/svy служат памятью для плавного возврата в обход после уклона/замаха.
+enemy.mvx=vx; enemy.mvy=vy; enemy.svx=vx; enemy.svy=vy
 enemy.x=enemy.x+vx*dt; enemy.y=enemy.y+vy*dt
 if enemy.x<enemy.size; enemy.x=enemy.size; end
 if enemy.x>screen_w-enemy.size; enemy.x=screen_w-enemy.size; end
 if enemy.y<enemy.size; enemy.y=enemy.size; end
 if enemy.y>screen_h-enemy.size; enemy.y=screen_h-enemy.size; end
+end
+function enemy_face_motion
+// Бот смотрит туда, куда реально движется (а не на игрока). Угол догоняется
+// плавно и с учётом перехода через -pi/pi, поэтому спрайт не дёргается.
+// Стоящий бот (скорость ~0) угол не меняет, чтобы не крутиться на месте.
+num sp=sqrt(enemy.mvx*enemy.mvx+enemy.mvy*enemy.mvy)
+if sp<10; return; end
+num ta=atan2(enemy.mvy,enemy.mvx), da=ta-enemy.angle
+if da>pi; da=da-2*pi; end
+if da<0-pi; da=da+2*pi; end
+enemy.angle=enemy.angle+da*clamp(dt*enemy_face_speed,0,1)
 end
 function enemy_track_player
 // «Зрение» бота: он сам измеряет скорость игрока по смещению позиции, а не
@@ -183,11 +197,14 @@ num orbit=bot_strafe_speed*enemy.strafe
 // Орбита всегда сильная: иначе бот «плывёт» по прямой в точку, а не кружит.
 if d>desired+180; orbit=orbit*0.85; end
 if d<desired*0.4; orbit=orbit*0.7; end
-// Сглаживаем скорость, чтобы шаг не дёргался при смене цели.
 num vx=dx/d*radial-dy/d*orbit, vy=dy/d*radial+dx/d*orbit
 num sp=sqrt(vx*vx+vy*vy), cap=bot_speed
 if sp>cap&&sp>0.001; vx=vx/sp*cap; vy=vy/sp*cap; end
-enemy_move vx,vy
+// Сглаживаем скорость между кадрами, чтобы шаг не дёргался при смене цели
+// и перевороте стороны обхода (раньше скорость скакала мгновенно).
+num ms=clamp(dt*enemy_move_smooth,0,1)
+enemy.svx=lerp(enemy.svx,vx,ms); enemy.svy=lerp(enemy.svy,vy,ms)
+enemy_move enemy.svx,enemy.svy
 end
 function update_enemy
 // Бот равен игроку по цифрам (урон 1, HP 10), но играет тактически:
@@ -198,6 +215,9 @@ function update_enemy
 //  4) наказывает промах: пока удар игрока на перезарядке, идёт в упор и бьёт;
 //  5) отходит и обходит сбоку только когда удар игрока действительно готов.
 enemy_track_player
+// Скорость движения этого кадра чистим заранее: если бот в этом кадре не
+// двигался, enemy_face_motion его не крутит (стоящий бот не вертится).
+enemy.mvx=0; enemy.mvy=0
 if enemy.cooldown>0; enemy.cooldown=enemy.cooldown-dt; if enemy.cooldown<0; enemy.cooldown=0; end; end
 if enemy.dodge_cd>0; enemy.dodge_cd=enemy.dodge_cd-dt; if enemy.dodge_cd<0; enemy.dodge_cd=0; end; end
 if enemy.flank>0; enemy.flank=enemy.flank-dt; end
@@ -238,23 +258,27 @@ return
 end
 // Короткая пауза после удара: отходим только если игроку есть чем ответить.
 if enemy.state==3
-enemy.state_time=enemy.state_time-dt; enemy.angle=atan2(dy,dx)
+enemy.state_time=enemy.state_time-dt
 if enemy_free_window()==0&&d<reach*0.9; enemy_predict 0; enemy_engage reach; end
+enemy_face_motion
 if enemy.state_time<=0; enemy.state=0; if enemy.flank<=0; enemy_pick_flank; enemy.flank=enemy_flank_time; end; end
 return
 end
-// Уклонение: быстрый шаг с линии удара игрока, лицом к цели — чтобы сразу бить.
+// Уклонение: быстрый шаг с линии удара игрока, лицом по движению. Если уклон
+// кончился — контратака сама наведёт угол на игрока (start_enemy_attack).
 if enemy.state==4
-enemy.state_time=enemy.state_time-dt; enemy_face_prediction
+enemy.state_time=enemy.state_time-dt
 num dpx=cos(player.angle), dpy=sin(player.angle)
 num dvx=-dpy*enemy.strafe*bot_dodge_speed-dpx*bot_speed*0.25
 num dvy=dpx*enemy.strafe*bot_dodge_speed-dpy*bot_speed*0.25
 enemy_move dvx,dvy
+enemy_face_motion
 // Уклон закончился — контратака: перезарядка удара сбрасывается.
 if enemy.state_time<=0; enemy.state=0; enemy.dodge_cd=enemy_dodge_cooldown; enemy.cooldown=0; enemy.think=0; end
 return
 end
-enemy_face_prediction
+// В свободном обходе бот НЕ пялится на игрока: смотрит по ходу движения
+// (enemy_face_motion ниже), на игрока он разворачивается только для удара.
 // Реакция на удар игрока: уходим с линии удара, но только если удар реально
 // накрывает бота. Реакция не мгновенная (enemy_reaction) — удар в упор попадёт.
 if punch_left>0&&punch_left<=punch_time-enemy_reaction&&enemy.dodge_cd<=0&&enemy_in_danger()==1
@@ -269,6 +293,7 @@ enemy.think=0
 if enemy.cooldown<=0&&enemy_would_hit()==1; start_enemy_attack; return; end
 enemy_predict enemy_lead
 enemy_engage reach*0.7
+enemy_face_motion
 return
 end
 // Удар готов и по прогнозу достаёт — бьём немедленно, без лишних танцев.
@@ -285,6 +310,7 @@ if enemy.cooldown>enemy_cooldown_min&&punch_cd<=0&&enemy_in_danger()==1; desired
 if d<enemy_min_distance*0.7; desired=enemy_min_distance; end
 enemy_predict enemy_lead
 enemy_engage desired
+enemy_face_motion
 end
 function update_game
 tick_revive

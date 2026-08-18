@@ -11,7 +11,10 @@ object Enemy
 // px/py/pvx/pvy/seen — «зрение» бота: последняя увиденная позиция игрока и
 // оценка его скорости (по ней бот упреждает удар и перехватывает движение).
 // flank — таймер смены стороны обхода.
-num x=0, y=0, size=25, hp=10, max_hp=10, angle=0, state=0, state_time=0, cooldown=0, hit=0, strafe=1, dodge_cd=0, think=0, px=0, py=0, pvx=0, pvy=0, seen=0, flank=0
+// mvx/mvy — фактическая скорость бота в ЭТОМ кадре (по ней спрайт
+// разворачивается в сторону движения); svx/svy — сглаженная скорость обхода,
+// живёт между кадрами, чтобы бой не дёргался при смене направления.
+num x=0, y=0, size=25, hp=10, max_hp=10, angle=0, state=0, state_time=0, cooldown=0, hit=0, strafe=1, dodge_cd=0, think=0, px=0, py=0, pvx=0, pvy=0, seen=0, flank=0, mvx=0, mvy=0, svx=0, svy=0
 end
 object Punch
 // shot — растущий номер удара; active/hit нужны для текущего окна урона.

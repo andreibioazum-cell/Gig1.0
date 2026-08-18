@@ -60,7 +60,7 @@ text tr_login_title(),24+login_ox,26,0xFFFFFF
 num bw=screen_w-120, bx=(screen_w-bw)/2+login_ox, fy=screen_h/2-60+login_oy
 text tr_nick(),bx+login_lab_ox,fy-login_lab,0xFFFFFF
 if login_field==1; roundrect bx,fy,bw,login_fh,14,0xFF4B2E83; else; roundrect bx,fy,bw,login_fh,14,0xFF2A2A40; end
-if str_len(login_nick)==0; if login_field==1; text_in_field "|",bx+16,fy,login_fh,0xFFFFFF,0.6; else; text_in_field tr_nick_ph(),bx+16,fy,login_fh,0x666688,0.6; end; else; if login_field==1; text_in_field login_nick+"|",bx+16,fy,login_fh,0xFFFFFF,0.6; else; text_in_field login_nick,bx+16,fy,login_fh,0xFFFFFF,0.6; end; end
+if str_len(login_nick)==0; if keyboard_visible()==1; text_in_field "|",bx+16,fy,login_fh,0xFFFFFF,0.6; else; text_in_field tr_nick_ph(),bx+16,fy,login_fh,0x666688,0.6; end; else; if keyboard_visible()==1; text_in_field login_nick+"|",bx+16,fy,login_fh,0xFFFFFF,0.6; else; text_in_field login_nick,bx+16,fy,login_fh,0xFFFFFF,0.6; end; end
 num yb=fy+login_fh+40
 button tr_play(),(screen_w-btn_w)/2,yb,btn_w,btn_h
 num sy=yb+btn_h+34
@@ -85,19 +85,16 @@ if action!=0; return; end
 if x>=screen_w-204&&x<=screen_w-8&&y>=8&&y<=72; start_transition 8; return; end
 num cx=(screen_w-btn_w)/2; if x<cx-12||x>cx+btn_w+12; return; end;if y>=screen_h/2-48&&y<=screen_h/2+32; start_transition 2; return; end; if y>=screen_h/2+32&&y<=screen_h/2+112; start_transition 4; return; end;if y>=screen_h/2+112&&y<=screen_h/2+192; login_after=0; start_transition 7; end;end
 function login_focus
-// Поле всегда одно: сразу берём фокус и открываем клавиатуру.
-// Если IME уже открыта, не чистим и не перезапускаем её — иначе набранное
-// пропадает, а на телефоне поле выглядит мёртвым.
+// Поле одно и всегда в фокусе. Если IME реально закрыта (например, юзер
+// смахнул её жестом) — просто показываем снова. Набранное НЕ стираем:
+// keyboard_show сам передаёт текущий буфер в системный редактор.
 login_field=1
 if keyboard_visible()==1; return; end
-keyboard_clear
-if str_len(login_nick)>0; keyboard_type login_nick; end
-last_kb=keyboard_get_text()
 keyboard_show
 end
 function login_open
 // Экран ника: очищаем чужой текст (чат) и сразу даём писать, без лишнего тапа.
-login_field=1; login_status=0; last_kb=""; login_nick=""
+login_field=1; login_status=0; login_nick=""
 keyboard_clear; keyboard_show
 end
 function login_do
