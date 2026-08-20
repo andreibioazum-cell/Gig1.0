@@ -1,18 +1,158 @@
+// engine.ds — top-level state machine and entry points
+//
+// The C runtime calls four hooks: init(), update(), draw() and touch().
+// Each one is defined below as a tiny dispatcher that routes to the
+// currently active game_state. The state machine itself is handled by
+// start_transition() / update_transition(), which animate a fade and only
+// then switch game_state.
+
+// ---------------------------------------------------------------------------
+// Screen transitions (fade in -> swap state -> fade out)
+// ---------------------------------------------------------------------------
+// t_dir controls the transition phase:
+//   0  idle, accepting new transitions.
+//   1  fading IN toward the target state.
+//   2  finished fading, swap game_state and side-effects, then flip to -1.
+//  -1  fading OUT back to fully transparent, then back to 0.
+//
+// We ignore new transition requests while one is already in flight.
 function start_transition num t
-if t_dir!=0; return; end; t_target=t; t_dir=1;end
-function update_transition
-if t_dir==1; t_fade=t_fade+dt/transition_duration; if t_fade>=1; t_fade=1; t_dir=2; end;else if t_dir==2; if game_state==7&&t_target!=7; keyboard_hide; end; if game_state==5&&t_target!=5; chat_open=0; keyboard_hide; net_disconnect; end; game_state=t_target; if t_target==1; init_game; else if t_target==5; init_online; else if t_target==6; console_scroll=0; else if t_target==7; login_open; end; t_dir=-1
-else if t_dir==-1; t_fade=t_fade-dt/transition_duration; if t_fade<=0; t_fade=0; t_dir=0; end; end;end
-function init
-ds_log "init: loading textures";png_load GRASS; png_load ORDINARY_TEX; png_load PUNCH_TEX; png_load AZUM_TEX; png_load AZUM_PUNCH_TEX;net_autologin FIREBASE
-cups=net_load_cups(); player_class=net_load_class(); azum_owned=net_load_azum()
-if azum_owned==0; player_class=0; end
-net_set_class player_class
-ds_log "init: ready";end
-function update
-update_transition; if game_state==1; update_game; else if game_state==5; update_online; else if game_state==7; update_login; end;end
-function draw
-if game_state==0; draw_lobby; else if game_state==1; draw_game; else if game_state==2; draw_modes; else if game_state==4; draw_settings; else if game_state==7; draw_login; else if game_state==8; draw_classes; else if game_state==9; draw_levels; else; draw_online; end;if t_fade>0; rect 0,0,screen_w,screen_h,(1+floor(t_fade*254))*0x1000000; end
+    if t_dir!=0
+        return
+    end
+    t_target=t
+    t_dir=1
 end
+
+// Per-frame tick of the transition state machine. Drives t_fade from 0..1
+// and back, and runs the per-state side effects (hide keyboard, disconnect
+// from chat, etc.) at the swap point.
+function update_transition
+    if t_dir==1
+        // Fade-in phase.
+        t_fade=t_fade+dt/transition_duration
+        if t_fade>=1
+            t_fade=1
+            t_dir=2
+        end
+    else if t_dir==2
+        // Fade-in finished: apply side effects for the state we are leaving
+        // and the one we are entering, then commit the new game_state.
+        if game_state==7&&t_target!=7
+            keyboard_hide
+        end
+        if game_state==5&&t_target!=5
+            chat_open=0
+            keyboard_hide
+            net_disconnect
+        end
+        game_state=t_target
+        if t_target==1
+            init_game
+        else if t_target==5
+            init_online
+        else if t_target==7
+            login_open
+        end
+        t_dir=-1
+    else if t_dir==-1
+        // Fade-out phase.
+        t_fade=t_fade-dt/transition_duration
+        if t_fade<=0
+            t_fade=0
+            t_dir=0
+        end
+    end
+end
+
+// ---------------------------------------------------------------------------
+// init() — load assets, restore progress, hook into the network
+// ---------------------------------------------------------------------------
+function init
+    // Load every PNG the game references up front so the first frame is
+    // smooth and no per-state hiccups happen on the first draw.
+    png_load GRASS
+    png_load ORDINARY_TEX
+    png_load PUNCH_TEX
+    png_load AZUM_TEX
+    png_load AZUM_PUNCH_TEX
+
+    // Auto-login restores the saved nick and Firebase session if available.
+    net_autologin FIREBASE
+
+    // Restore currency, class and unlocks from disk, but if Azum was never
+    // bought we must reset the class back to 0 so a hacked save can't keep
+    // the locked class.
+    cups         =net_load_cups()
+    player_class =net_load_class()
+    azum_owned   =net_load_azum()
+    if azum_owned==0
+        player_class=0
+    end
+    net_set_class player_class
+end
+
+// ---------------------------------------------------------------------------
+// update() — per-frame logic dispatch
+// ---------------------------------------------------------------------------
+function update
+    // Transitions are independent of game_state; the fade ticks even when
+    // the menu is "frozen" so it always finishes.
+    update_transition
+
+    if game_state==1
+        update_game
+    else if game_state==5
+        update_online
+    else if game_state==7
+        update_login
+    end
+end
+
+// ---------------------------------------------------------------------------
+// draw() — per-frame render dispatch
+// ---------------------------------------------------------------------------
+function draw
+    if game_state==0
+        draw_lobby
+    else if game_state==1
+        draw_game
+    else if game_state==2
+        draw_modes
+    else if game_state==4
+        draw_settings
+    else if game_state==7
+        draw_login
+    else if game_state==8
+        draw_classes
+    else if game_state==9
+        draw_levels
+    else
+        draw_online
+    end
+
+    // Black overlay on top of everything, alpha driven by t_fade. Multiplied
+    // by 0x1000000 so the color sits in the alpha channel only.
+    if t_fade>0
+        rect 0,0,screen_w,screen_h,(1+floor(t_fade*254))*0x1000000
+    end
+end
+
+// ---------------------------------------------------------------------------
+// touch() — input dispatch
+// ---------------------------------------------------------------------------
 function touch num x, num y, num action, num id
-if t_dir!=0; return; end; if game_state==0; touch_lobby x,y,action; else if game_state==1||game_state==5; touch_game x,y,action,id; else; touch_menu x,y,action; end;end
+    // Ignore taps while a transition is running so the user can't trigger
+    // a second state change mid-fade.
+    if t_dir!=0
+        return
+    end
+
+    if game_state==0
+        touch_lobby x,y,action
+    else if game_state==1||game_state==5
+        touch_game x,y,action,id
+    else
+        touch_menu x,y,action
+    end
+end

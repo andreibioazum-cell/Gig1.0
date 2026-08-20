@@ -1,30 +1,92 @@
-// entities — игровые объекты
-// Punch — событие удара: точка, направление и счётчик выстрела для сети
+// entities.ds — runtime game objects and globals
+//
+// All long-lived gameplay objects (Player, Enemy, Punch) and the global
+// state shared by the combat / online systems live in this file.
+//
+// Note: dimscript object fields have to live on a single logical line
+// (a sequence of `type name = value` declarations separated by commas).
+// The compiler is line-based and does not understand multi-line field
+// lists inside an `object` block. The function bodies further down in
+// this and other files are free to use multi-line `if`/`loop`/`else`/
+// `end` blocks for readability.
+
+// ---------------------------------------------------------------------------
+// Player — the local avatar
+// ---------------------------------------------------------------------------
+// x, y    — world position (center of the sprite/collision).
+// size    — collision radius in pixels (visible sprite matches the hitbox).
+// angle   — facing angle, used for the sprite and the punch direction.
+// hp/max_hp — current / maximum health.
 object Player
 num x=0, y=0, size=30, angle=0, hp=10, max_hp=10
 end
+
+// ---------------------------------------------------------------------------
+// Enemy — the solo bot (or remote opponent shape on the wire)
+// ---------------------------------------------------------------------------
+// state machine:
+//   0  approach / strafe — orbiting the desired distance.
+//   1  windup            — committing to a punch direction.
+//   2  punch             — short active hit window (damage applied here).
+//   3  recovery          — brief post-punch pause.
+//   4  dodge             — stepping off the player's punch line.
+//
+// Numbers match the player on purpose (HP 10, damage 1, ~0.3 s attack cycle).
+// The bot isn't "tougher" than the player — it plays like a human: holds
+// distance, retreats after trades, and dodges the punch.
+//
+// dodge_cd — cooldown on the dodge action.
+// think    — micro-pause between approaches.
+// px/py/pvx/pvy/seen — "vision": last seen player position and an
+//                      estimate of the player's velocity. The bot predicts
+//                      ahead using these, both for its own punch and to
+//                      intercept movement.
+// flank    — timer that triggers re-choosing the flank direction.
+// mvx/mvy  — actual velocity of THIS frame (used to turn the sprite toward
+//            the direction of motion).
+// svx/svy  — smoothed strafe velocity that persists across frames, so the
+//            motion doesn't jitter when the bot switches direction.
 object Enemy
-// state: 0 = сближение/стрейф, 1 = замах, 2 = удар, 3 = отход, 4 = уклонение
-// Цифры бота равны игроку: hp 10, урон 1, цикл атаки 0.3 с. Бот не «толще»
-// и не «сильнее» игрока — он играет как живой: держит дистанцию и уклоняется.
-// dodge_cd — перезарядка уклонения, think — пауза-передышка между заходами.
-// px/py/pvx/pvy/seen — «зрение» бота: последняя увиденная позиция игрока и
-// оценка его скорости (по ней бот упреждает удар и перехватывает движение).
-// flank — таймер смены стороны обхода.
-// mvx/mvy — фактическая скорость бота в ЭТОМ кадре (по ней спрайт
-// разворачивается в сторону движения); svx/svy — сглаженная скорость обхода,
-// живёт между кадрами, чтобы бой не дёргался при смене направления.
 num x=0, y=0, size=25, hp=10, max_hp=10, angle=0, state=0, state_time=0, cooldown=0, hit=0, strafe=1, dodge_cd=0, think=0, px=0, py=0, pvx=0, pvy=0, seen=0, flank=0, mvx=0, mvy=0, svx=0, svy=0
 end
+
+// ---------------------------------------------------------------------------
+// Punch — one in-flight punch event
+// ---------------------------------------------------------------------------
+// x, y, dx, dy — origin and direction of the swing.
+// active        — 1 while a punch has been requested (used to drive animation).
+// shot          — monotonically increasing punch counter (used over the
+//                 network so receivers can deduplicate).
+// hit           — set when the punch connected this swing (prevents
+//                 multi-hits inside the same active window).
 object Punch
-// shot — растущий номер удара; active/hit нужны для текущего окна урона.
 num x=0, y=0, dx=0, dy=0, active=0, shot=0, hit=0
 end
+
+// Instantiate the three long-lived objects. Reset of their fields happens
+// inside reset_battle() and similar helpers.
 Player player=new Player()
-Enemy enemy=new Enemy()
-Punch punch=new Punch()
-// punch_cd — кулдаун между ударами, aim_a — прозрачность серого хитбокса (0..1)
-// aim_tx/aim_ty — точка упреждения бота (куда он целится с учётом скорости игрока)
+Enemy  enemy =new Enemy()
+Punch  punch =new Punch()
+
+// ---------------------------------------------------------------------------
+// Global combat / UI state
+// ---------------------------------------------------------------------------
+// aim_tx, aim_ty — point the bot is currently aiming at, after leading the
+//                  player. Used by prediction, rendering and dodge logic.
+// aim_a          — alpha of the player's aim bar (0..1, fades out after a
+//                  punch finishes).
+// aim_id         — pointer id currently holding the attack button.
+// atk_x, atk_y   — on-screen center of the attack button.
+// joy_id         — pointer id currently grabbing the joystick.
+// punch_left     — seconds left in the current punch animation.
+// punch_cd       — seconds left on the punch cooldown.
+// finished       — 0 still playing, 1 victory, 2 defeat.
 num aim_tx=0, aim_ty=0
 num finished=0, atk_x=0, atk_y=0, joy_id=-1, aim_id=-1, punch_left=0, punch_cd=0, aim_a=0
-arr remotes=arr_new(), remote_punches=arr_new()
+
+// Per-slot remote state. The arrays are flat; each slot's data lives at
+// index slot * fields_count. They are sized in reset_battle() so the game
+// can re-enter online mode without leaking the previous match's slots.
+arr remotes       =arr_new()
+arr remote_punches=arr_new()

@@ -1,102 +1,442 @@
+// locale.ds — localized strings
+//
+// Every user-facing string goes through one of these tr_* helpers so the
+// game can be translated without touching call sites. Each function picks
+// the right language from the `language` global (0 English, 1 Russian,
+// 2 Japanese) and returns the matching string.
+
+// ---------------------------------------------------------------------------
+// Main menu / settings
+// ---------------------------------------------------------------------------
 function tr_play
-if language==1; return "Играть"; else if language==2; return "遊ぶ"; end; return "Play";end
-function tr_settings
-if language==1; return "Настройки"; else if language==2; return "設定"; end; return "Settings";end
-function tr_solo
-if language==1; return "Соло"; else if language==2; return "ソロ"; end; return "Solo";end
-function tr_online
-if language==1; return "Онлайн"; else if language==2; return "オンライン"; end; return "Online";end
-function tr_console
-if language==1; return "Консоль"; else if language==2; return "コンソール"; end; return "Console";end
-function tr_up
-if language==1; return "Вверх"; else if language==2; return "上へ"; end; return "Up";end
-function tr_down
-if language==1; return "Вниз"; else if language==2; return "下へ"; end; return "Down";end
-function tr_clear
-if language==1; return "Очистить"; else if language==2; return "消去"; end; return "Clear";end
-function tr_back
-if language==1; return "Назад"; else if language==2; return "戻る"; end; return "Back";end
-function tr_punch
-if language==1; return "Удар"; else if language==2; return "攻撃"; end; return "Punch";end
-function tr_tap_to_return
-if language==1; return "Нажмите, чтобы выйти"; else if language==2; return "タップして戻る"; end; return "Tap to return";end
-function tr_victory
-if language==1; return "Победа!"; else if language==2; return "勝利!"; end; return "Victory!";end
-function tr_opponent_defeated
-if language==1; return "Соперник побеждён"; else if language==2; return "相手を倒した"; end; return "Opponent defeated";end
-function tr_defeat
-if language==1; return "Поражение"; else if language==2; return "敗北"; end; return "Defeat";end
-function tr_opponent_won
-if language==1; return "Соперник победил"; else if language==2; return "相手の勝利"; end; return "The opponent won";end
-function tr_you_were_defeated
-if language==1; return "Вы повержены"; else if language==2; return "倒されました"; end; return "You were defeated";end
-function tr_no_connection
-if language==1; return "Нет соединения"; else if language==2; return "接続なし"; end; return "No connection";end
-function tr_reconnecting
-if language==1; return "Переподключение..."; else if language==2; return "再接続中..."; end; return "Reconnecting...";end
-function tr_connecting
-if language==1; return "Подключение..."; else if language==2; return "接続中..."; end; return "Connecting...";end
-function tr_chat
-if language==1; return "Чат"; else if language==2; return "チャット"; end; return "Chat";end
-function tr_online_chat
-if language==1; return "Онлайн чат"; else if language==2; return "オンラインチャット"; end; return "Online chat";end
-function tr_no_messages
-if language==1; return "Нет сообщений"; else if language==2; return "メッセージなし"; end; return "No messages";end
-function tr_close
-if language==1; return "Закрыть"; else if language==2; return "閉じる"; end; return "Close";end
-function tr_type_message
-if language==1; return "Введите сообщение..."; else if language==2; return "メッセージを入力..."; end; return "Type a message...";end
-function tr_send
-if language==1; return "Отправить"; else if language==2; return "送信"; end; return "Send";end
-function tr_account
-if language==1; return "Аккаунт"; else if language==2; return "アカウント"; end; return "Account";end
-function tr_login_title
-if language==1; return "Введите ник"; else if language==2; return "ニックネームを入力"; end; return "Enter your nick";end
-function tr_nick
-if language==1; return "Ник"; else if language==2; return "ニック"; end; return "Nick";end
-function tr_nick_ph
-if language==1; return "Ник: 3-16 (буквы, цифры, _)"; else if language==2; return "ニック: 3-16モジ"; end; return "Nick: 3-16 (letters, digits, _)";end
-function tr_bad_nick
-if language==1; return "Ник: 3-16 символов, только буквы, цифры и _"; else if language==2; return "ニック: 3-16モジ、エイスウジト_ノミ"; end; return "Nick: 3-16 chars, letters, digits and _ only";end
-function tr_your_nick
-if language==1; return "Ваш ник: "; else if language==2; return "ニック: "; end; return "Your nick: ";end
-function tr_disco_epilepsy
-// Локализованный японский шрифт не поддерживается и превращался в «???».
-return "Epilepsy safe"
+    if language==1
+        return "Играть"
+    else if language==2
+        return "遊ぶ"
+    end
+    return "Play"
 end
+
+function tr_settings
+    if language==1
+        return "Настройки"
+    else if language==2
+        return "設定"
+    end
+    return "Settings"
+end
+
+function tr_solo
+    if language==1
+        return "Соло"
+    else if language==2
+        return "ソロ"
+    end
+    return "Solo"
+end
+
+function tr_online
+    if language==1
+        return "Онлайн"
+    else if language==2
+        return "オンライン"
+    end
+    return "Online"
+end
+
+function tr_up
+    if language==1
+        return "Вверх"
+    else if language==2
+        return "上へ"
+    end
+    return "Up"
+end
+
+function tr_down
+    if language==1
+        return "Вниз"
+    else if language==2
+        return "下へ"
+    end
+    return "Down"
+end
+
+function tr_clear
+    if language==1
+        return "Очистить"
+    else if language==2
+        return "消去"
+    end
+    return "Clear"
+end
+
+function tr_back
+    if language==1
+        return "Назад"
+    else if language==2
+        return "戻る"
+    end
+    return "Back"
+end
+
+// ---------------------------------------------------------------------------
+// In-game / result screen
+// ---------------------------------------------------------------------------
+function tr_punch
+    if language==1
+        return "Удар"
+    else if language==2
+        return "攻撃"
+    end
+    return "Punch"
+end
+
+function tr_tap_to_return
+    if language==1
+        return "Нажмите, чтобы выйти"
+    else if language==2
+        return "タップして戻る"
+    end
+    return "Tap to return"
+end
+
+function tr_victory
+    if language==1
+        return "Победа!"
+    else if language==2
+        return "勝利!"
+    end
+    return "Victory!"
+end
+
+function tr_opponent_defeated
+    if language==1
+        return "Соперник побеждён"
+    else if language==2
+        return "相手を倒した"
+    end
+    return "Opponent defeated"
+end
+
+function tr_defeat
+    if language==1
+        return "Поражение"
+    else if language==2
+        return "敗北"
+    end
+    return "Defeat"
+end
+
+function tr_opponent_won
+    if language==1
+        return "Соперник победил"
+    else if language==2
+        return "相手の勝利"
+    end
+    return "The opponent won"
+end
+
+function tr_you_were_defeated
+    if language==1
+        return "Вы повержены"
+    else if language==2
+        return "倒されました"
+    end
+    return "You were defeated"
+end
+
+// ---------------------------------------------------------------------------
+// Network status
+// ---------------------------------------------------------------------------
+function tr_no_connection
+    if language==1
+        return "Нет соединения"
+    else if language==2
+        return "接続なし"
+    end
+    return "No connection"
+end
+
+function tr_reconnecting
+    if language==1
+        return "Переподключение..."
+    else if language==2
+        return "再接続中..."
+    end
+    return "Reconnecting..."
+end
+
+function tr_connecting
+    if language==1
+        return "Подключение..."
+    else if language==2
+        return "接続中..."
+    end
+    return "Connecting..."
+end
+
+// ---------------------------------------------------------------------------
+// Online chat
+// ---------------------------------------------------------------------------
+function tr_chat
+    if language==1
+        return "Чат"
+    else if language==2
+        return "チャット"
+    end
+    return "Chat"
+end
+
+function tr_online_chat
+    if language==1
+        return "Онлайн чат"
+    else if language==2
+        return "オンラインチャット"
+    end
+    return "Online chat"
+end
+
+function tr_no_messages
+    if language==1
+        return "Нет сообщений"
+    else if language==2
+        return "メッセージなし"
+    end
+    return "No messages"
+end
+
+function tr_close
+    if language==1
+        return "Закрыть"
+    else if language==2
+        return "閉じる"
+    end
+    return "Close"
+end
+
+function tr_type_message
+    if language==1
+        return "Введите сообщение..."
+    else if language==2
+        return "メッセージを入力..."
+    end
+    return "Type a message..."
+end
+
+function tr_send
+    if language==1
+        return "Отправить"
+    else if language==2
+        return "送信"
+    end
+    return "Send"
+end
+
+// ---------------------------------------------------------------------------
+// Account / login
+// ---------------------------------------------------------------------------
+function tr_account
+    if language==1
+        return "Аккаунт"
+    else if language==2
+        return "アカウント"
+    end
+    return "Account"
+end
+
+function tr_login_title
+    if language==1
+        return "Введите ник"
+    else if language==2
+        return "ニックネームを入力"
+    end
+    return "Enter your nick"
+end
+
+function tr_nick
+    if language==1
+        return "Ник"
+    else if language==2
+        return "ニック"
+    end
+    return "Nick"
+end
+
+function tr_nick_ph
+    if language==1
+        return "Ник: 3-16 (буквы, цифры, _)"
+    else if language==2
+        return "ニック: 3-16モジ"
+    end
+    return "Nick: 3-16 (letters, digits, _)"
+end
+
+function tr_bad_nick
+    if language==1
+        return "Ник: 3-16 символов, только буквы, цифры и _"
+    else if language==2
+        return "ニック: 3-16モジ、エイスウジト_ノミ"
+    end
+    return "Nick: 3-16 chars, letters, digits and _ only"
+end
+
+// ---------------------------------------------------------------------------
+// Settings toggles
+// ---------------------------------------------------------------------------
+// Japanese characters in this string used to render as "???" because the
+// in-game font doesn't ship a Japanese glyph set, so the label is always
+// the English phrase, regardless of the active language.
+function tr_disco_epilepsy
+    return "Epilepsy safe"
+end
+
 function tr_mode_on
-if language==1; return "вкл"; else if language==2; return "オン"; end; return "on";end
+    if language==1
+        return "вкл"
+    else if language==2
+        return "オン"
+    end
+    return "on"
+end
+
 function tr_mode_off
-if language==1; return "выкл"; else if language==2; return "オフ"; end; return "off";end
+    if language==1
+        return "выкл"
+    else if language==2
+        return "オフ"
+    end
+    return "off"
+end
+
+// ---------------------------------------------------------------------------
+// Classes
+// ---------------------------------------------------------------------------
 function tr_classes
-if language==1; return "Классы"; else if language==2; return "クラス"; end; return "Classes";end
+    if language==1
+        return "Классы"
+    else if language==2
+        return "クラス"
+    end
+    return "Classes"
+end
+
 function tr_class_ordinary
-if language==1; return "Обычный"; else if language==2; return "ノーマル"; end; return "Ordinary";end
+    if language==1
+        return "Обычный"
+    else if language==2
+        return "ノーマル"
+    end
+    return "Ordinary"
+end
+
 function tr_class_azum
-if language==1; return "Азум"; else if language==2; return "アズム"; end; return "Azum";end
+    if language==1
+        return "Азум"
+    else if language==2
+        return "アズム"
+    end
+    return "Azum"
+end
+
 function tr_class_ordinary_desc
-if language==1; return "Стандартный боец"; else if language==2; return "ふつうのせんし"; end; return "Standard fighter";end
+    if language==1
+        return "Стандартный боец"
+    else if language==2
+        return "ふつうのせんし"
+    end
+    return "Standard fighter"
+end
+
 function tr_class_azum_desc
-if language==1; return "Возрождение 1 раз за игру"; else if language==2; return "1試合に1回復活"; end; return "Revive once per match";end
+    if language==1
+        return "Возрождение 1 раз за игру"
+    else if language==2
+        return "1試合に1回復活"
+    end
+    return "Revive once per match"
+end
+
 function tr_class_selected
-if language==1; return "Выбран"; else if language==2; return "せんたくちゅう"; end; return "Selected";end
+    if language==1
+        return "Выбран"
+    else if language==2
+        return "せんたくちゅう"
+    end
+    return "Selected"
+end
+
 function tr_class_pick
-if language==1; return "Выбрать"; else if language==2; return "えらぶ"; end; return "Select";end
-function tr_your_class
-if language==1; return "Класс: "; else if language==2; return "クラス: "; end; return "Class: ";end
+    if language==1
+        return "Выбрать"
+    else if language==2
+        return "えらぶ"
+    end
+    return "Select"
+end
+
+// ---------------------------------------------------------------------------
+// Levels / currency
+// ---------------------------------------------------------------------------
 function tr_levels
-if language==1; return "Уровни"; else if language==2; return "レベル"; end; return "Levels";end
+    if language==1
+        return "Уровни"
+    else if language==2
+        return "レベル"
+    end
+    return "Levels"
+end
+
 function tr_level
-if language==1; return "Уровень"; else if language==2; return "レベル"; end; return "Level";end
+    if language==1
+        return "Уровень"
+    else if language==2
+        return "レベル"
+    end
+    return "Level"
+end
+
 function tr_level_absorb
-if language==1; return "Поглощение урона"; else if language==2; return "ダメージ吸収"; end; return "Damage absorb";end
-function tr_levels_soon
-if language==1; return "Скоро!"; else if language==2; return "近日公開!"; end; return "Coming soon!";end
+    if language==1
+        return "Поглощение урона"
+    else if language==2
+        return "ダメージ吸収"
+    end
+    return "Damage absorb"
+end
+
 function tr_cups
-if language==1; return "Кубки"; else if language==2; return "カップ"; end; return "Cups";end
+    if language==1
+        return "Кубки"
+    else if language==2
+        return "カップ"
+    end
+    return "Cups"
+end
+
 function tr_class_buy
-if language==1; return "Купить · 50"; else if language==2; return "買う · 50"; end; return "Buy · 50";end
+    if language==1
+        return "Купить · 50"
+    else if language==2
+        return "買う · 50"
+    end
+    return "Buy · 50"
+end
+
 function tr_class_need_cups
-if language==1; return "Нужно 50 кубков"; else if language==2; return "50カップ必要"; end; return "Need 50 cups";end
+    if language==1
+        return "Нужно 50 кубков"
+    else if language==2
+        return "50カップ必要"
+    end
+    return "Need 50 cups"
+end
+
 function tr_cups_reward
-if language==1; return "+5 кубков"; else if language==2; return "+5カップ"; end; return "+5 cups";end
+    if language==1
+        return "+5 кубков"
+    else if language==2
+        return "+5カップ"
+    end
+    return "+5 cups"
+end

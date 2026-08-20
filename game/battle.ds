@@ -1,595 +1,1494 @@
-// battle.ds — только система боя (без чата)
-// Ближний бой: пуль больше нет — прицел и удар.
-// Хитбокс удара широкий (punch_width) и недлинный (punch_reach).
+// battle.ds — combat system (single-player and online)
+//
+// Combat is pure melee: no bullets, just a punch hitbox. The hitbox is wide
+// (punch_width) but short (punch_reach) and rotates with the player, so
+// the swing looks and feels like a real arm motion.
 
+// ---------------------------------------------------------------------------
+// Class-specific idle / punch textures
+// ---------------------------------------------------------------------------
+// Both classes share the same combat numbers; the only difference is the
+// art used for the idle frame and the punch frame.
 function class_idle_tex num cls
-if cls==1; return AZUM_TEX; end
-return ORDINARY_TEX
+    if cls==1
+        return AZUM_TEX
+    end
+    return ORDINARY_TEX
 end
+
 function class_punch_tex num cls
-if cls==1; return AZUM_PUNCH_TEX; end
-return PUNCH_TEX
+    if cls==1
+        return AZUM_PUNCH_TEX
+    end
+    return PUNCH_TEX
 end
+
 function player_idle_tex
-return class_idle_tex(player_class)
+    return class_idle_tex(player_class)
 end
+
 function player_punch_tex
-return class_punch_tex(player_class)
+    return class_punch_tex(player_class)
 end
+
+// ---------------------------------------------------------------------------
+// take_damage — apply damage to the player with level-based absorption
+// ---------------------------------------------------------------------------
+// Each level absorbs 10% of incoming damage, capped at 90%. The same formula
+// is used against the solo bot and against online opponents so the level
+// system behaves identically in both modes.
 function take_damage num dmg
-// Уровень поглощает 10% входящего урона за ступень. Касается и бота, и онлайна.
-num absorb=player_level*0.1
-if absorb<0; absorb=0; end
-if absorb>0.9; absorb=0.9; end
-player.hp=player.hp-dmg*(1-absorb)
-if player.hp<0; player.hp=0; end
+    num absorb=player_level*0.1
+    if absorb<0
+        absorb=0
+    end
+    if absorb>0.9
+        absorb=0.9
+    end
+    player.hp=player.hp-dmg*(1-absorb)
+    if player.hp<0
+        player.hp=0
+    end
 end
+
+// ---------------------------------------------------------------------------
+// try_revive — Azum's one-shot self-revive
+// ---------------------------------------------------------------------------
+// Returns 1 if a revive actually happened (caller should NOT count this as
+// a real death), 0 otherwise. Azum revives at a random arena position far
+// from the bot so it never pops back up directly under an incoming hit.
+// There is no on-screen flash for balance reasons; Azum simply stands up.
 function try_revive
-// Азум один раз за бой встаёт с полным HP. Обычный класс сразу проигрывает.
-if player.hp>0; return 0; end
-if player_class!=1; return 0; end
-if azum_revived==1; return 0; end
-azum_revived=1; player.hp=player.max_hp; revive_prot=1.2
-// Никакой вспышки на экране — Азум просто встаёт в случайной точке арены,
-// подальше от бота, чтобы не воскреснуть прямо под его ударом.
-num k=0
-loop k<50
-num rx=70+rand()%(screen_w-140), ry=70+rand()%(screen_h-140)
-if dist(rx,ry,enemy.x,enemy.y)>200; k=50; player.x=rx; player.y=ry; else; k=k+1; end
+    if player.hp>0
+        return 0
+    end
+    if player_class!=1
+        return 0
+    end
+    if azum_revived==1
+        return 0
+    end
+
+    azum_revived=1
+    player.hp=player.max_hp
+    revive_prot=1.2
+
+    // Pick a random spawn point at least 200 px from the bot. Retry up to
+    // 50 times; the arena is small enough that 50 tries always succeeds.
+    num k=0
+    loop k<50
+        num rx=70+rand()%(screen_w-140)
+        num ry=70+rand()%(screen_h-140)
+        if dist(rx,ry,enemy.x,enemy.y)>200
+            k=50
+            player.x=rx
+            player.y=ry
+        else
+            k=k+1
+        end
+    end
+
+    return 1
 end
-ds_log "azum revived"
-return 1
-end
+
+// Per-frame tick of the post-revive invulnerability window.
 function tick_revive
-if revive_prot>0; revive_prot=revive_prot-dt; if revive_prot<0; revive_prot=0; end; end
+    if revive_prot>0
+        revive_prot=revive_prot-dt
+        if revive_prot<0
+            revive_prot=0
+        end
+    end
 end
+
+// ---------------------------------------------------------------------------
+// reset_battle — wipe all combat state for a fresh match
+// ---------------------------------------------------------------------------
+// Used by both the single-player init (init_game) and the online init
+// (init_online). Anything that should NOT survive a rematch is reset here:
+// player position, hitbox, cooldowns, AI memory, network arrays.
 function reset_battle
-// сброс игрока в центр, очистка ударов и ремоутов
-player.x=screen_w/2; player.y=screen_h/2; player.angle=0; player.hp=player.max_hp; player.size=25*player_scale; enemy.size=25*enemy_scale; enemy.state=0; enemy.state_time=0; enemy.cooldown=0; enemy.hit=0; enemy.dodge_cd=0; enemy.think=0; enemy.mvx=0; enemy.mvy=0; enemy.svx=0; enemy.svy=0; finished=0; punch.active=0; punch.hit=0; punch_left=0; punch_cd=0; aim_id=-1; aim_a=0
-azum_revived=0; revive_prot=0; cups_awarded=0; match_seen_foe=0
-joy.x=130; joy.y=screen_h-150; joy.r=70; atk_x=screen_w-140; atk_y=screen_h-150; drop_joy
-arr_clear remotes; arr_clear remote_punches
-num i=0; loop i<max_players*remote_fields; arr_push remotes,0; i=i+1; end
-i=0; loop i<max_players*punch_fields; arr_push remote_punches,0; i=i+1; end
+    // Center the player, full HP, no movement, sprite at neutral angle.
+    player.x=screen_w/2
+    player.y=screen_h/2
+    player.angle=0
+    player.hp=player.max_hp
+    player.size=25*player_scale
+    enemy.size=25*enemy_scale
+
+    // Bot: idle state, no cooldowns, no AI memory, no movement this frame.
+    enemy.state=0
+    enemy.state_time=0
+    enemy.cooldown=0
+    enemy.hit=0
+    enemy.dodge_cd=0
+    enemy.think=0
+    enemy.mvx=0
+    enemy.mvy=0
+    enemy.svx=0
+    enemy.svy=0
+
+    // Punches, finish flag, joystick, attack button, and Azum flags.
+    finished=0
+    punch.active=0
+    punch.hit=0
+    punch_left=0
+    punch_cd=0
+    aim_id=-1
+    aim_a=0
+    azum_revived=0
+    revive_prot=0
+    cups_awarded=0
+    match_seen_foe=0
+
+    // Recenter the on-screen joystick and attack button, then drop any
+    // active touch so a finger that was on screen during the rematch
+    // doesn't carry over.
+    joy.x=130
+    joy.y=screen_h-150
+    joy.r=70
+    atk_x=screen_w-140
+    atk_y=screen_h-150
+    drop_joy
+
+    // Reset and reallocate the per-slot network arrays so each slot has
+    // its own contiguous block of remote_fields / punch_fields numbers.
+    arr_clear remotes
+    arr_clear remote_punches
+    num i=0
+    loop i<max_players*remote_fields
+        arr_push remotes,0
+        i=i+1
+    end
+    i=0
+    loop i<max_players*punch_fields
+        arr_push remote_punches,0
+        i=i+1
+    end
 end
+
+// Single-player entry point: reset, then spawn the bot.
 function init_game
-reset_battle; enemy.hp=enemy.max_hp; spawn_enemy
+    reset_battle
+    enemy.hp=enemy.max_hp
+    spawn_enemy
 end
+
+// Online entry point: reset, close chat, hide keyboard, then announce
+// ourselves to the network and connect to the configured Firebase room.
 function init_online
-reset_battle; chat_open=0; keyboard_hide; online_ready=0; net_set_class player_class; net_connect FIREBASE,ROOM
+    reset_battle
+    chat_open=0
+    keyboard_hide
+    online_ready=0
+    net_set_class player_class
+    net_connect FIREBASE,ROOM
 end
+
+// Map the network slot index to a 2x2 grid of fixed spawn positions on the
+// arena. Stays consistent across all clients so everyone sees the same
+// layout regardless of who joined first.
 function place_online
-// слот -> позиция на карте
-num s=net_slot(), row=floor(s/2), col=s-row*2; player.x=screen_w*(0.3+0.4*col); player.y=screen_h*(0.35+0.3*row); online_ready=1
+    num s=net_slot()
+    num row=floor(s/2)
+    num col=s-row*2
+    player.x=screen_w*(0.3+0.4*col)
+    player.y=screen_h*(0.35+0.3*row)
+    online_ready=1
 end
+
+// Spawn the solo bot at a random arena position at least 280 px from the
+// player, with a randomized strafe direction so the very first second of
+// the match doesn't look identical every time.
 function spawn_enemy
-num margin=70, i=0
-loop i<50
-enemy.x=margin+rand()%(screen_w-140); enemy.y=margin+rand()%(screen_h-140)
-if dist(enemy.x,enemy.y,player.x,player.y)>280; i=50; else; i=i+1; end
+    num margin=70
+    num i=0
+    loop i<50
+        enemy.x=margin+rand()%(screen_w-140)
+        enemy.y=margin+rand()%(screen_h-140)
+        if dist(enemy.x,enemy.y,player.x,player.y)>280
+            i=50
+        else
+            i=i+1
+        end
+    end
+    enemy.state=0
+    enemy.state_time=0
+    enemy.cooldown=enemy_first_delay
+    enemy.hit=0
+    enemy.dodge_cd=0
+    enemy.think=0
+    enemy.mvx=0
+    enemy.mvy=0
+    enemy.svx=0
+    enemy.svy=0
+    if rand()%2==0
+        enemy.strafe=-1
+    else
+        enemy.strafe=1
+    end
 end
-enemy.state=0; enemy.state_time=0; enemy.cooldown=enemy_first_delay; enemy.hit=0; enemy.dodge_cd=0; enemy.think=0; enemy.mvx=0; enemy.mvy=0; enemy.svx=0; enemy.svy=0
-if rand()%2==0; enemy.strafe=-1; else; enemy.strafe=1; end
-end
+
+// ---------------------------------------------------------------------------
+// sprite_a — convert game angle to sprite angle
+// ---------------------------------------------------------------------------
+// The idle / punch sprite is drawn "facing up", so we add pi/2 to align it
+// with the gameplay angle convention (0 = +X axis, increasing counter-
+// clockwise).
 function sprite_a num a
-// спрайт нарисован «лицом вверх», поэтому к игровому углу добавляем pi/2
-return a+pi/2
+    return a+pi/2
 end
+
+// ---------------------------------------------------------------------------
+// move_player — joystick-driven player movement
+// ---------------------------------------------------------------------------
+// The player rotates to exactly match the joystick tilt, so even tiny
+// nudges update the facing. We clamp to the arena so the sprite can't
+// slide off the edge.
 function move_player
-// движение джойстиком: игрок разворачивается ровно туда, куда наклонён джойстик
-player.x=player.x+joy.dx*joy_speed*dt; player.y=player.y+joy.dy*joy_speed*dt
-num jm=sqrt(joy.dx*joy.dx+joy.dy*joy.dy); if jm>0.15; player.angle=atan2(joy.dy,joy.dx); end
-if player.x<player.size; player.x=player.size; end; if player.x>screen_w-player.size; player.x=screen_w-player.size; end; if player.y<player.size; player.y=player.size; end; if player.y>screen_h-player.size; player.y=screen_h-player.size; end
+    player.x=player.x+joy.dx*joy_speed*dt
+    player.y=player.y+joy.dy*joy_speed*dt
+    num jm=sqrt(joy.dx*joy.dx+joy.dy*joy.dy)
+    if jm>0.15
+        player.angle=atan2(joy.dy,joy.dx)
+    end
+    if player.x<player.size
+        player.x=player.size
+    end
+    if player.x>screen_w-player.size
+        player.x=screen_w-player.size
+    end
+    if player.y<player.size
+        player.y=player.size
+    end
+    if player.y>screen_h-player.size
+        player.y=screen_h-player.size
+    end
 end
+
+// ---------------------------------------------------------------------------
+// in_punch_box — does (tx, ty) lie inside a punch hitbox?
+// ---------------------------------------------------------------------------
+// The hitbox is rotated with the player: it extends forward along (pdx,pdy)
+// up to punch_reach, and is ±punch_width/2 perpendicular to that axis.
+// All comparisons are in the local frame of the swing, so the result is
+// correct regardless of facing direction.
 function in_punch_box num px, num py, num pdx, num pdy, num tx, num ty
-// хитбокс удара повёрнут вместе с игроком: вперёд по (pdx,pdy) не дальше
-// punch_reach (недлинный), вбок ±punch_width/2 (широкий)
-num rx=tx-px, ry=ty-py, fw=rx*pdx+ry*pdy, side=ry*pdx-rx*pdy
-if fw>=0&&fw<=punch_reach&&side*side<=punch_width*punch_width/4; return 1; end; return 0
+    num rx=tx-px
+    num ry=ty-py
+    num fw=rx*pdx+ry*pdy
+    num side=ry*pdx-rx*pdy
+    if fw>=0&&fw<=punch_reach&&side*side<=punch_width*punch_width/4
+        return 1
+    end
+    return 0
 end
+
+// ---------------------------------------------------------------------------
+// enemy_in_punch — would the current player punch hit the bot?
+// ---------------------------------------------------------------------------
+// We test the bot's center plus its 4 rotated corners. The corners are
+// computed in the bot's local frame (forward/side axes), NOT the screen
+// AABB, so a rotated bot still has a tight hitbox that follows its sprite.
 function enemy_in_punch
-// уменьшенный хитбокс врага: проверяем центр и 4 угла на попадание в хитбокс удара.
-// Его положение проверяется в локальных координатах направления punch.dx/punch.dy.
-num ex=enemy.x, ey=enemy.y, hs=enemy.size*0.65
-num fx=cos(enemy.angle)*hs, fy=sin(enemy.angle)*hs, sx=-sin(enemy.angle)*hs, sy=cos(enemy.angle)*hs
-if in_punch_box(punch.x,punch.y,punch.dx,punch.dy,ex,ey)==1; return 1; end
-// Проверяем повёрнутые углы, а не углы экранного квадрата.
-if in_punch_box(punch.x,punch.y,punch.dx,punch.dy,ex-fx-sx,ey-fy-sy)==1; return 1; end
-if in_punch_box(punch.x,punch.y,punch.dx,punch.dy,ex+fx-sx,ey+fy-sy)==1; return 1; end
-if in_punch_box(punch.x,punch.y,punch.dx,punch.dy,ex+fx+sx,ey+fy+sy)==1; return 1; end
-if in_punch_box(punch.x,punch.y,punch.dx,punch.dy,ex-fx+sx,ey-fy+sy)==1; return 1; end
-return 0
+    num ex=enemy.x
+    num ey=enemy.y
+    num hs=enemy.size*0.65
+    num fx=cos(enemy.angle)*hs
+    num fy=sin(enemy.angle)*hs
+    num sx=-sin(enemy.angle)*hs
+    num sy=cos(enemy.angle)*hs
+    if in_punch_box(punch.x,punch.y,punch.dx,punch.dy,ex,ey)==1
+        return 1
+    end
+    if in_punch_box(punch.x,punch.y,punch.dx,punch.dy,ex-fx-sx,ey-fy-sy)==1
+        return 1
+    end
+    if in_punch_box(punch.x,punch.y,punch.dx,punch.dy,ex+fx-sx,ey+fy-sy)==1
+        return 1
+    end
+    if in_punch_box(punch.x,punch.y,punch.dx,punch.dy,ex+fx+sx,ey+fy+sy)==1
+        return 1
+    end
+    if in_punch_box(punch.x,punch.y,punch.dx,punch.dy,ex-fx+sx,ey-fy+sy)==1
+        return 1
+    end
+    return 0
 end
+
+// ---------------------------------------------------------------------------
+// update_aim — drive the player aim bar alpha and punch cooldown
+// ---------------------------------------------------------------------------
+// The aim bar is only visible during the active punch window, NOT during
+// the windup; this keeps "aim" honest as a hitbox indicator rather than
+// a permanent targeting reticle.
 function update_aim
-// хитбокс показывается ТОЛЬКО во время самого удара (пока меняется текстура и
-// наносится урон), при простом прицеливании его не видно
-if punch_left>0&&finished==0; aim_a=1
-else; aim_a=aim_a-dt/aim_fade_out; if aim_a<0; aim_a=0; end; end
-if punch_cd>0; punch_cd=punch_cd-dt; if punch_cd<0; punch_cd=0; end; end
+    if punch_left>0&&finished==0
+        aim_a=1
+    else
+        aim_a=aim_a-dt/aim_fade_out
+        if aim_a<0
+            aim_a=0
+        end
+    end
+    if punch_cd>0
+        punch_cd=punch_cd-dt
+        if punch_cd<0
+            punch_cd=0
+        end
+    end
 end
+
+// ---------------------------------------------------------------------------
+// follow_punch — keep the punch hitbox glued to the player
+// ---------------------------------------------------------------------------
+// While the punch animation is playing, the hitbox origin must follow the
+// player's movement every frame, otherwise walking during a swing would
+// leave the hitbox behind and miss obvious hits.
 function follow_punch
-// хитбокс удара привязан к игроку: при ходьбе во время удара он не отстаёт
-if punch_left<=0; return; end
-punch.x=player.x; punch.y=player.y; punch.dx=cos(player.angle); punch.dy=sin(player.angle)
+    if punch_left<=0
+        return
+    end
+    punch.x=player.x
+    punch.y=player.y
+    punch.dx=cos(player.angle)
+    punch.dy=sin(player.angle)
 end
+
+// ---------------------------------------------------------------------------
+// enemy_move — single source of truth for bot translation
+// ---------------------------------------------------------------------------
+// Records the actual per-frame velocity into mvx/mvy (used to turn the
+// sprite toward the direction of motion) and the persistent smoothed
+// velocity into svx/svy (used to ease transitions when the strafe side
+// flips). Also clamps the bot to the arena.
 function enemy_move num vx, num vy
-// Единое перемещение ИИ с учётом границ экрана. Запоминаем фактическую
-// скорость кадра: по mvx/mvy спрайт разворачивается в сторону движения,
-// svx/svy служат памятью для плавного возврата в обход после уклона/замаха.
-enemy.mvx=vx; enemy.mvy=vy; enemy.svx=vx; enemy.svy=vy
-enemy.x=enemy.x+vx*dt; enemy.y=enemy.y+vy*dt
-if enemy.x<enemy.size; enemy.x=enemy.size; end
-if enemy.x>screen_w-enemy.size; enemy.x=screen_w-enemy.size; end
-if enemy.y<enemy.size; enemy.y=enemy.size; end
-if enemy.y>screen_h-enemy.size; enemy.y=screen_h-enemy.size; end
+    enemy.mvx=vx
+    enemy.mvy=vy
+    enemy.svx=vx
+    enemy.svy=vy
+    enemy.x=enemy.x+vx*dt
+    enemy.y=enemy.y+vy*dt
+    if enemy.x<enemy.size
+        enemy.x=enemy.size
+    end
+    if enemy.x>screen_w-enemy.size
+        enemy.x=screen_w-enemy.size
+    end
+    if enemy.y<enemy.size
+        enemy.y=enemy.size
+    end
+    if enemy.y>screen_h-enemy.size
+        enemy.y=screen_h-enemy.size
+    end
 end
+
+// ---------------------------------------------------------------------------
+// enemy_face_motion — turn the bot sprite toward its current velocity
+// ---------------------------------------------------------------------------
+// The bot faces the direction it is actually moving, not the player. This
+// reads as more natural during strafing. A standing bot (very low speed)
+// keeps its current angle so it doesn't twitch in place.
 function enemy_face_motion
-// Бот смотрит туда, куда реально движется (а не пялится на игрока). Угол
-// догоняется плавно и с учётом перехода через -pi/pi, поэтому спрайт не
-// дёргается. Стоящий бот (скорость ~0) угол не меняет, чтобы не крутиться.
-num sp=sqrt(enemy.mvx*enemy.mvx+enemy.mvy*enemy.mvy)
-if sp<10; return; end
-num ta=atan2(enemy.mvy,enemy.mvx), da=ta-enemy.angle
-if da>pi; da=da-2*pi; end
-if da<0-pi; da=da+2*pi; end
-enemy.angle=enemy.angle+da*clamp(dt*enemy_face_speed,0,1)
+    num sp=sqrt(enemy.mvx*enemy.mvx+enemy.mvy*enemy.mvy)
+    if sp<10
+        return
+    end
+    num ta=atan2(enemy.mvy,enemy.mvx)
+    num da=ta-enemy.angle
+    if da>pi
+        da=da-2*pi
+    end
+    if da<0-pi
+        da=da+2*pi
+    end
+    enemy.angle=enemy.angle+da*clamp(dt*enemy_face_speed,0,1)
 end
+
+// ---------------------------------------------------------------------------
+// enemy_track_player — bot's "vision" of the player
+// ---------------------------------------------------------------------------
+// The bot measures the player's velocity itself by sampling the player's
+// position each frame, rather than reading the joystick directly. This
+// way the same prediction code works against a still opponent (speed 0,
+// so no lead) and against a sprinting one.
 function enemy_track_player
-// «Зрение» бота: он сам измеряет скорость игрока по смещению позиции, а не
-// подглядывает в джойстик. Так упреждение работает и против стоящего игрока
-// (скорость 0 -> бьёт точно по нему), и против бегущего.
-if enemy.seen==0; enemy.px=player.x; enemy.py=player.y; enemy.pvx=0; enemy.pvy=0; enemy.seen=1; return; end
-num vx=0, vy=0
-if dt>0; vx=(player.x-enemy.px)/dt; vy=(player.y-enemy.py)/dt; end
-num sp=sqrt(vx*vx+vy*vy)
-if sp>joy_speed; vx=vx/sp*joy_speed; vy=vy/sp*joy_speed; end
-enemy.pvx=lerp(enemy.pvx,vx,0.3); enemy.pvy=lerp(enemy.pvy,vy,0.3)
-enemy.px=player.x; enemy.py=player.y
+    if enemy.seen==0
+        enemy.px=player.x
+        enemy.py=player.y
+        enemy.pvx=0
+        enemy.pvy=0
+        enemy.seen=1
+        return
+    end
+    num vx=0
+    num vy=0
+    if dt>0
+        vx=(player.x-enemy.px)/dt
+        vy=(player.y-enemy.py)/dt
+    end
+    num sp=sqrt(vx*vx+vy*vy)
+    if sp>joy_speed
+        vx=vx/sp*joy_speed
+        vy=vy/sp*joy_speed
+    end
+    enemy.pvx=lerp(enemy.pvx,vx,0.3)
+    enemy.pvy=lerp(enemy.pvy,vy,0.3)
+    enemy.px=player.x
+    enemy.py=player.y
 end
+
+// Helper: scalar speed of the bot's tracked player velocity.
 function enemy_speed_of_player
-return sqrt(enemy.pvx*enemy.pvx+enemy.pvy*enemy.pvy)
+    return sqrt(enemy.pvx*enemy.pvx+enemy.pvy*enemy.pvy)
 end
+
+// ---------------------------------------------------------------------------
+// enemy_predict — where the player will be in `lead` seconds
+// ---------------------------------------------------------------------------
+// The predicted point is clamped to the arena so the bot never aims at a
+// wall when the player is cornered against an edge.
 function enemy_predict num lead
-// Точка, где игрок окажется через lead секунд. Прогноз ограничен ареной,
-// чтобы бот не целился в стену, когда игрок упирается в край.
-aim_tx=clamp(player.x+enemy.pvx*lead,player.size,screen_w-player.size)
-aim_ty=clamp(player.y+enemy.pvy*lead,player.size,screen_h-player.size)
+    aim_tx=clamp(player.x+enemy.pvx*lead,player.size,screen_w-player.size)
+    aim_ty=clamp(player.y+enemy.pvy*lead,player.size,screen_h-player.size)
 end
+
+// Aim the bot at its predicted point. Called whenever the bot needs to
+// re-orient toward the player (e.g. when starting a windup).
 function enemy_face_prediction
-// Бот целится в точку, где игрок будет в момент касания удара.
-enemy_predict enemy_lead
-enemy.angle=atan2(aim_ty-enemy.y,aim_tx-enemy.x)
+    enemy_predict enemy_lead
+    enemy.angle=atan2(aim_ty-enemy.y,aim_tx-enemy.x)
 end
+
+// ---------------------------------------------------------------------------
+// player_in_enemy_punch — would the bot's current swing hit the player?
+// ---------------------------------------------------------------------------
+// Mirrors enemy_in_punch, but using the bot's punch direction and the
+// player's collision radius (0.65 of size, same factor the bot uses for
+// itself). This keeps the "generosity" identical in both directions.
 function player_in_enemy_punch
-num pdx=cos(enemy.angle), pdy=sin(enemy.angle), rx=player.x-enemy.x, ry=player.y-enemy.y
-// Габарит игрока в проверке ровно такой же, как габарит бота в enemy_in_punch
-// (0.65 от размера) — попадания по игроку и по боту одинаково «щедрые».
-num fw=rx*pdx+ry*pdy, side=ry*pdx-rx*pdy, pr=player.size*0.65, half=enemy_punch_width/2+pr
-if fw>=0&&fw<=enemy_punch_reach+pr&&side*side<=half*half; return 1; end
-return 0
+    num pdx=cos(enemy.angle)
+    num pdy=sin(enemy.angle)
+    num rx=player.x-enemy.x
+    num ry=player.y-enemy.y
+    num fw=rx*pdx+ry*pdy
+    num side=ry*pdx-rx*pdy
+    num pr=player.size*0.65
+    num half=enemy_punch_width/2+pr
+    if fw>=0&&fw<=enemy_punch_reach+pr&&side*side<=half*half
+        return 1
+    end
+    return 0
 end
+
+// ---------------------------------------------------------------------------
+// enemy_would_hit — should the bot commit to a punch right now?
+// ---------------------------------------------------------------------------
+// The bot predicts the player's position `enemy_lead` seconds in the
+// future and checks if that point lies inside its punch hitbox. This is
+// what stops the bot from either swinging at empty air or waiting when
+// the target is already in reach, including against a still player.
 function enemy_would_hit
-// Главная проверка «бить или не бить»: бот считает, попадёт ли удар, если
-// начать замах прямо сейчас. Берётся прогноз позиции игрока на момент
-// активного окна удара, поэтому бот не машет в воздух и не ждёт зря, когда
-// цель уже в досягаемости — в том числе по стоящему игроку.
-enemy_predict enemy_lead
-num rx=aim_tx-enemy.x, ry=aim_ty-enemy.y, fd=sqrt(rx*rx+ry*ry)
-num pr=player.size*0.65
-// Запас enemy_hit_margin нужен только из-за упреждения движения: если игрок
-// почти стоит, прогноз совпадает с его реальной позицией, и полная дальность
-// удара должна считаться попаданием. Иначе бот отказывается бить по игроку,
-// стоящему на самом краю своей атаки — «игрок на конце моей атаки, не хочу».
-num margin=enemy_hit_margin
-if enemy_speed_of_player()<enemy_still_speed; margin=0; end
-if fd<=enemy_punch_reach+pr-margin; return 1; end
-return 0
+    enemy_predict enemy_lead
+    num rx=aim_tx-enemy.x
+    num ry=aim_ty-enemy.y
+    num fd=sqrt(rx*rx+ry*ry)
+    num pr=player.size*0.65
+
+    // The hit_margin is only there to compensate for the motion prediction:
+    // if the player is nearly still, the prediction matches the real
+    // position and the FULL reach should count as a hit. Otherwise the
+    // bot would refuse to swing at a player standing on the very edge of
+    // its reach ("they're at the tip of my swing, I won't bother").
+    num margin=enemy_hit_margin
+    if enemy_speed_of_player()<enemy_still_speed
+        margin=0
+    end
+    if fd<=enemy_punch_reach+pr-margin
+        return 1
+    end
+    return 0
 end
+
+// ---------------------------------------------------------------------------
+// enemy_in_danger — is the bot currently inside the player's punch hitbox?
+// ---------------------------------------------------------------------------
+// Uses the player's actual hitbox geometry (not just the player's center
+// distance to the bot) so the dodge decision matches the real risk.
 function enemy_in_danger
-// Бот внутри хитбокса удара игрока (по настоящей геометрии удара игрока).
-num pdx=cos(player.angle), pdy=sin(player.angle), rx=enemy.x-player.x, ry=enemy.y-player.y
-num fw=rx*pdx+ry*pdy, side=ry*pdx-rx*pdy, er=enemy.size*0.65, half=punch_width/2+er
-if fw>=-er&&fw<=punch_reach+er&&side*side<=half*half; return 1; end
-return 0
+    num pdx=cos(player.angle)
+    num pdy=sin(player.angle)
+    num rx=enemy.x-player.x
+    num ry=enemy.y-player.y
+    num fw=rx*pdx+ry*pdy
+    num side=ry*pdx-rx*pdy
+    num er=enemy.size*0.65
+    num half=punch_width/2+er
+    if fw>=-er&&fw<=punch_reach+er&&side*side<=half*half
+        return 1
+    end
+    return 0
 end
+
+// ---------------------------------------------------------------------------
+// enemy_free_window — is the player unable to retaliate right now?
+// ---------------------------------------------------------------------------
+// True while the player has just swung and the punch is on cooldown. The
+// bot uses this window to close distance and press the attack.
 function enemy_free_window
-// Окно безнаказанности: игрок только что ударил и его удар на перезарядке —
-// ответить он не успеет. В это время бот идёт в упор и жмёт атаку.
-if punch_left<=0&&punch_cd>enemy_punish_react; return 1; end
-return 0
+    if punch_left<=0&&punch_cd>enemy_punish_react
+        return 1
+    end
+    return 0
 end
+
+// Pick a flank side (left/right) relative to the player. The bot uses
+// (enemy - player) cross the player's facing to figure out which side of
+// the player it's currently on, then mirrors to the opposite side.
 function enemy_pick_flank
-// Заход сбоку/со спины: бот обходит туда, где он не в лоб к игроку.
-num side=(enemy.y-player.y)*cos(player.angle)-(enemy.x-player.x)*sin(player.angle)
-if side>=0; enemy.strafe=1; else; enemy.strafe=-1; end
+    num side=(enemy.y-player.y)*cos(player.angle)-(enemy.x-player.x)*sin(player.angle)
+    if side>=0
+        enemy.strafe=1
+    else
+        enemy.strafe=-1
+    end
 end
+
+// Roll a new bot punch cooldown in [min, max]. The lower bound is enforced
+// so the bot can never spam faster than enemy_cooldown_min.
 function enemy_roll_cooldown
-// Перезарядка удара бота каждый раз новая: случайное число в диапазоне
-// enemy_cooldown_min..enemy_cooldown_max, но никогда быстрее enemy_cooldown_min.
-num r=enemy_cooldown_min+(rand()%1000)/1000.0*(enemy_cooldown_max-enemy_cooldown_min)
-if r<enemy_cooldown_min; r=enemy_cooldown_min; end
-return r
+    num r=enemy_cooldown_min+(rand()%1000)/1000.0*(enemy_cooldown_max-enemy_cooldown_min)
+    if r<enemy_cooldown_min
+        r=enemy_cooldown_min
+    end
+    return r
 end
+
+// Begin a punch sequence: enter the windup state, arm the windup timer,
+// reset the hit flag, and aim at the predicted point right away.
 function start_enemy_attack
-enemy.state=1; enemy.state_time=enemy_windup; enemy.hit=0; enemy_face_prediction
+    enemy.state=1
+    enemy.state_time=enemy_windup
+    enemy.hit=0
+    enemy_face_prediction
 end
+
+// ---------------------------------------------------------------------------
+// enemy_engage — one "step" of bot motion
+// ---------------------------------------------------------------------------
+// Holds the chosen distance to the player and orbits around it. Radial
+// velocity scales with the distance error so the bot neither freezes in
+// place nor sticks to the player. The orbit term is always strong; only
+// at very close range do we dampen it so the bot doesn't oscillate.
 function enemy_engage num desired
-// Единый «шаг» бота: он держит выбранную дистанцию до игрока и одновременно
-// обходит его по дуге. Радиальная скорость тем больше, чем сильнее дистанция
-// отличается от нужной, поэтому бот не топчется и не прилипает.
-num dx=aim_tx-enemy.x, dy=aim_ty-enemy.y, d=sqrt(dx*dx+dy*dy); if d<1; d=1; end
-num radial=clamp((d-desired)*enemy_close_gain,-bot_speed,bot_speed)
-num orbit=bot_strafe_speed*enemy.strafe
-// Орбита всегда сильная: иначе бот «плывёт» по прямой в точку, а не кружит.
-if d>desired+180; orbit=orbit*0.85; end
-if d<desired*0.4; orbit=orbit*0.7; end
-num vx=dx/d*radial-dy/d*orbit, vy=dy/d*radial+dx/d*orbit
-num sp=sqrt(vx*vx+vy*vy), cap=bot_speed
-if sp>cap&&sp>0.001; vx=vx/sp*cap; vy=vy/sp*cap; end
-// Сглаживаем скорость между кадрами, чтобы шаг не дёргался при смене цели
-// и перевороте стороны обхода (раньше скорость скакала мгновенно).
-num ms=clamp(dt*enemy_move_smooth,0,1)
-enemy.svx=lerp(enemy.svx,vx,ms); enemy.svy=lerp(enemy.svy,vy,ms)
-enemy_move enemy.svx,enemy.svy
+    num dx=aim_tx-enemy.x
+    num dy=aim_ty-enemy.y
+    num d=sqrt(dx*dx+dy*dy)
+    if d<1
+        d=1
+    end
+    num radial=clamp((d-desired)*enemy_close_gain,-bot_speed,bot_speed)
+    num orbit=bot_strafe_speed*enemy.strafe
+    if d>desired+180
+        orbit=orbit*0.85
+    end
+    if d<desired*0.4
+        orbit=orbit*0.7
+    end
+    num vx=dx/d*radial-dy/d*orbit
+    num vy=dy/d*radial+dx/d*orbit
+    num sp=sqrt(vx*vx+vy*vy)
+    num cap=bot_speed
+    if sp>cap&&sp>0.001
+        vx=vx/sp*cap
+        vy=vy/sp*cap
+    end
+
+    // Smooth the velocity between frames so swapping the strafe side or
+    // target doesn't snap the bot instantly. A previous implementation
+    // jumped the velocity to the new value in one frame, which felt jerky.
+    num ms=clamp(dt*enemy_move_smooth,0,1)
+    enemy.svx=lerp(enemy.svx,vx,ms)
+    enemy.svy=lerp(enemy.svy,vy,ms)
+    enemy_move enemy.svx,enemy.svy
 end
+
+// ---------------------------------------------------------------------------
+// update_enemy — main bot brain
+// ---------------------------------------------------------------------------
+// The bot is numerically equal to the player (damage 1, HP 10) but plays
+// tactically:
+//   1) measures the player's velocity and leads the punch — commits
+//      immediately against a stationary target;
+//   2) commits only when the prediction says the punch lands, so it never
+//      swings at empty air and never waits when the target is in reach;
+//   3) dodges the real hitbox geometry of the player's punch and counters;
+//   4) punishes a whiff by closing distance while the punch is on cooldown;
+//   5) flanks and steps back only when the player can actually fight back.
 function update_enemy
-// Бот равен игроку по цифрам (урон 1, HP 10), но играет тактически:
-//  1) видит скорость игрока и упреждает удар — по стоящему бьёт сразу;
-//  2) бьёт по прогнозу попадания, а не по «дистанции вообще» — не машет в
-//     воздух и не ждёт лишнего, когда цель уже достаётся;
-//  3) уклоняется от реального хитбокса удара игрока и сразу контратакует;
-//  4) наказывает промах: пока удар игрока на перезарядке, идёт в упор и бьёт;
-//  5) отходит и обходит сбоку только когда удар игрока действительно готов.
-enemy_track_player
-// Скорость движения этого кадра чистим заранее: если бот в этом кадре не
-// двигался, enemy_face_motion его не крутит (стоящий бот не вертится).
-enemy.mvx=0; enemy.mvy=0
-if enemy.cooldown>0; enemy.cooldown=enemy.cooldown-dt; if enemy.cooldown<0; enemy.cooldown=0; end; end
-if enemy.dodge_cd>0; enemy.dodge_cd=enemy.dodge_cd-dt; if enemy.dodge_cd<0; enemy.dodge_cd=0; end; end
-if enemy.flank>0; enemy.flank=enemy.flank-dt; end
-num dx=player.x-enemy.x, dy=player.y-enemy.y, d=sqrt(dx*dx+dy*dy)
-if d<1; d=1; end
-num pr=player.size*0.65, reach=enemy_punch_reach+pr
-// Замах: бот ещё ведёт цель, затем фиксирует направление — уклон честно работает.
-if enemy.state==1
-enemy.state_time=enemy.state_time-dt
-if enemy.state_time>enemy_lock_time; enemy_face_prediction; end
-// Доводка: в замахе бот доступает до цели, если игрок начал уходить.
-enemy_predict enemy_lead
-num adx=aim_tx-enemy.x, ady=aim_ty-enemy.y, ad=sqrt(adx*adx+ady*ady); if ad<1; ad=1; end
-if ad>reach-enemy_hit_margin
-num ovx=-ady/ad*bot_strafe_speed*enemy.strafe*0.55, ovy=adx/ad*bot_strafe_speed*enemy.strafe*0.55
-enemy_move adx/ad*bot_speed*0.85+ovx,ady/ad*bot_speed*0.85+ovy
+    enemy_track_player
+
+    // Clear the per-frame motion vector up front so a stationary frame
+    // (no movement) doesn't keep the old velocity and rotate the sprite
+    // toward where the bot was moving a frame ago.
+    enemy.mvx=0
+    enemy.mvy=0
+
+    // Tick cooldowns.
+    if enemy.cooldown>0
+        enemy.cooldown=enemy.cooldown-dt
+        if enemy.cooldown<0
+            enemy.cooldown=0
+        end
+    end
+    if enemy.dodge_cd>0
+        enemy.dodge_cd=enemy.dodge_cd-dt
+        if enemy.dodge_cd<0
+            enemy.dodge_cd=0
+        end
+    end
+    if enemy.flank>0
+        enemy.flank=enemy.flank-dt
+    end
+
+    num dx=player.x-enemy.x
+    num dy=player.y-enemy.y
+    num d=sqrt(dx*dx+dy*dy)
+    if d<1
+        d=1
+    end
+    num pr=player.size*0.65
+    num reach=enemy_punch_reach+pr
+
+    // -- Windup state -----------------------------------------------------
+    // Track the predicted point until the lock moment, then freeze the
+    // direction. This makes dodge honest: if you sidestep during the
+    // windup, the bot's punch direction was already chosen and will miss.
+    if enemy.state==1
+        enemy.state_time=enemy.state_time-dt
+        if enemy.state_time>enemy_lock_time
+            enemy_face_prediction
+        end
+        // During windup, close the remaining distance so a player that
+        // tries to back off still gets hit.
+        enemy_predict enemy_lead
+        num adx=aim_tx-enemy.x
+        num ady=aim_ty-enemy.y
+        num ad=sqrt(adx*adx+ady*ady)
+        if ad<1
+            ad=1
+        end
+        if ad>reach-enemy_hit_margin
+            num ovx=-ady/ad*bot_strafe_speed*enemy.strafe*0.55
+            num ovy=adx/ad*bot_strafe_speed*enemy.strafe*0.55
+            enemy_move adx/ad*bot_speed*0.85+ovx,ady/ad*bot_speed*0.85+ovy
+        end
+        if enemy.state_time<=0
+            enemy.state=2
+            enemy.state_time=enemy_punch_time
+            enemy.hit=0
+        end
+        return
+    end
+
+    // -- Active hit window ------------------------------------------------
+    // The angle is already frozen at the end of windup; do NOT re-aim
+    // at the player here, otherwise the punch would "snap" onto the
+    // target and dodge would never work.
+    if enemy.state==2
+        enemy.state_time=enemy.state_time-dt
+        if enemy.hit==0&&player_in_enemy_punch()==1
+            enemy.hit=1
+            if revive_prot<=0
+                take_damage enemy_damage
+                if player.hp<=0
+                    player.hp=0
+                    if try_revive()==0
+                        finish_game 2
+                        return
+                    end
+                end
+            end
+        end
+        if enemy.state_time<=0
+            enemy.state=3
+            enemy.state_time=enemy_recovery
+            enemy.cooldown=enemy_roll_cooldown()
+            // If we landed and the player can't swing back, press the
+            // advantage by holding the short cooldown and skipping the
+            // think pause; otherwise take a short breather.
+            if enemy.hit==1&&enemy_free_window()==1
+                enemy.cooldown=enemy_cooldown_min
+                enemy.think=0
+            else
+                enemy.think=enemy_think_min+(rand()%100)/100.0*(enemy_think_max-enemy_think_min)
+            end
+        end
+        return
+    end
+
+    // -- Recovery ---------------------------------------------------------
+    // Only step back if the player can actually hit us back; if their
+    // punch is on cooldown, the recovery is harmless and we can stand.
+    if enemy.state==3
+        enemy.state_time=enemy.state_time-dt
+        if enemy_free_window()==0&&d<reach*0.9
+            enemy_predict 0
+            enemy_engage reach
+        end
+        enemy_face_motion
+        if enemy.state_time<=0
+            enemy.state=0
+            if enemy.flank<=0
+                enemy_pick_flank
+                enemy.flank=enemy_flank_time
+            end
+        end
+        return
+    end
+
+    // -- Dodge ------------------------------------------------------------
+    // Step perpendicular to the player's facing. The dodge ends on its
+    // own timer; afterwards, start_enemy_attack() will re-aim at the
+    // player for the counter.
+    if enemy.state==4
+        enemy.state_time=enemy.state_time-dt
+        num dpx=cos(player.angle)
+        num dpy=sin(player.angle)
+        num dvx=-dpy*enemy.strafe*bot_dodge_speed-dpx*bot_speed*0.25
+        num dvy=dpx*enemy.strafe*bot_dodge_speed-dpy*bot_speed*0.25
+        enemy_move dvx,dvy
+        enemy_face_motion
+        if enemy.state_time<=0
+            enemy.state=0
+            enemy.dodge_cd=enemy_dodge_cooldown
+            enemy.cooldown=0
+            enemy.think=0
+        end
+        return
+    end
+
+    // -- Free / approach state -------------------------------------------
+    // The bot does NOT stare at the player while free; enemy_face_motion
+    // turns the sprite toward the actual direction of travel. It only
+    // snaps to face the player when it's about to swing.
+
+    // React to the player's active punch: dodge only if the hitbox would
+    // actually catch us, and not instantly (enemy_reaction), so a punch
+    // thrown at point-blank range still connects.
+    if punch_left>0&&punch_left<=punch_time-enemy_reaction&&enemy.dodge_cd<=0&&enemy_in_danger()==1
+        num side=(enemy.y-player.y)*cos(player.angle)-(enemy.x-player.x)*sin(player.angle)
+        if side>=0
+            enemy.strafe=1
+        else
+            enemy.strafe=-1
+        end
+        enemy.state=4
+        enemy.state_time=enemy_dodge_time
+        return
+    end
+
+    // Punish: the player whiffed, close distance and swing when in reach.
+    if enemy_free_window()==1
+        enemy.think=0
+        if enemy.cooldown<=0&&enemy_would_hit()==1
+            start_enemy_attack
+            return
+        end
+        enemy_predict enemy_lead
+        enemy_engage reach*0.7
+        enemy_face_motion
+        return
+    end
+
+    // Punch is ready and the prediction says it lands — commit immediately.
+    if enemy.cooldown<=0&&enemy.think<=0&&enemy_would_hit()==1
+        start_enemy_attack
+        return
+    end
+
+    // Micro-pause between approaches so the fight doesn't feel robotic.
+    if enemy.think>0
+        enemy.think=enemy.think-dt
+    end
+
+    // Periodically re-pick the flank side so the bot doesn't just circle
+    // in one direction forever.
+    if enemy.flank<=0
+        enemy_pick_flank
+        enemy.flank=enemy_flank_time
+    end
+
+    // Desired distance:
+    //  - crush a still player into point-blank range;
+    //  - hold the default reach against a player who can swing;
+    //  - back off slightly while our own punch is on cooldown.
+    num desired=reach*0.75
+    if enemy_speed_of_player()<enemy_still_speed&&punch_cd>0
+        desired=reach*0.6
+    end
+    if enemy.cooldown>enemy_cooldown_min&&punch_cd<=0&&enemy_in_danger()==1
+        desired=punch_reach+enemy.size*0.8
+    end
+    if d<enemy_min_distance*0.7
+        desired=enemy_min_distance
+    end
+    enemy_predict enemy_lead
+    enemy_engage desired
+    enemy_face_motion
 end
-if enemy.state_time<=0; enemy.state=2; enemy.state_time=enemy_punch_time; enemy.hit=0; end
-return
-end
-// Короткое активное окно удара. Простое касание врага урон не наносит.
-if enemy.state==2
-enemy.state_time=enemy.state_time-dt
-// Угол уже зафиксирован в конце замаха (enemy_lock_time). Не наводимся
-// заново на игрока: иначе удар «примагничивается» и уворот не работает.
-if enemy.hit==0&&player_in_enemy_punch()==1
-enemy.hit=1
-if revive_prot<=0
-take_damage enemy_damage; ds_log "enemy punch! hp %g",player.hp
-if player.hp<=0; player.hp=0; if try_revive()==0; finish_game 2; return; end; end
-end
-end
-if enemy.state_time<=0
-enemy.state=3; enemy.state_time=enemy_recovery; enemy.cooldown=enemy_roll_cooldown()
-// Попал и игрок не может ответить — держим серию, а не отходим.
-if enemy.hit==1&&enemy_free_window()==1; enemy.cooldown=enemy_cooldown_min; enemy.think=0
-else; enemy.think=enemy_think_min+(rand()%100)/100.0*(enemy_think_max-enemy_think_min); end
-end
-return
-end
-// Короткая пауза после удара: отходим только если игроку есть чем ответить.
-if enemy.state==3
-enemy.state_time=enemy.state_time-dt
-if enemy_free_window()==0&&d<reach*0.9; enemy_predict 0; enemy_engage reach; end
-enemy_face_motion
-if enemy.state_time<=0; enemy.state=0; if enemy.flank<=0; enemy_pick_flank; enemy.flank=enemy_flank_time; end; end
-return
-end
-// Уклонение: быстрый шаг с линии удара игрока, лицом по движению. Если уклон
-// кончился — контратака сама наведёт угол на игрока (start_enemy_attack).
-if enemy.state==4
-enemy.state_time=enemy.state_time-dt
-num dpx=cos(player.angle), dpy=sin(player.angle)
-num dvx=-dpy*enemy.strafe*bot_dodge_speed-dpx*bot_speed*0.25
-num dvy=dpx*enemy.strafe*bot_dodge_speed-dpy*bot_speed*0.25
-enemy_move dvx,dvy
-enemy_face_motion
-// Уклон закончился — контратака: перезарядка удара сбрасывается.
-if enemy.state_time<=0; enemy.state=0; enemy.dodge_cd=enemy_dodge_cooldown; enemy.cooldown=0; enemy.think=0; end
-return
-end
-// В свободном обходе бот НЕ пялится на игрока: смотрит по ходу движения
-// (enemy_face_motion ниже), на игрока он разворачивается только для удара.
-// Реакция на удар игрока: уходим с линии удара, но только если удар реально
-// накрывает бота. Реакция не мгновенная (enemy_reaction) — удар в упор попадёт.
-if punch_left>0&&punch_left<=punch_time-enemy_reaction&&enemy.dodge_cd<=0&&enemy_in_danger()==1
-num side=(enemy.y-player.y)*cos(player.angle)-(enemy.x-player.x)*sin(player.angle)
-if side>=0; enemy.strafe=1; else; enemy.strafe=-1; end
-enemy.state=4; enemy.state_time=enemy_dodge_time
-return
-end
-// Наказание промаха: удар игрока на перезарядке — бот идёт в упор и бьёт.
-if enemy_free_window()==1
-enemy.think=0
-if enemy.cooldown<=0&&enemy_would_hit()==1; start_enemy_attack; return; end
-enemy_predict enemy_lead
-enemy_engage reach*0.7
-enemy_face_motion
-return
-end
-// Удар готов и по прогнозу достаёт — бьём немедленно, без лишних танцев.
-if enemy.cooldown<=0&&enemy.think<=0&&enemy_would_hit()==1; start_enemy_attack; return; end
-// Микропауза между заходами (чтобы бой дышал), но короткая — не «миллион секунд».
-if enemy.think>0; enemy.think=enemy.think-dt; end
-// Смена стороны обхода: бот регулярно перезаходит с фланга, а не кружит по кругу.
-if enemy.flank<=0; enemy_pick_flank; enemy.flank=enemy_flank_time; end
-// Нужная дистанция: стоящего игрока додавливаем в упор, от готового к удару
-// держимся на своей дальности, а пока свой удар на перезарядке — чуть дальше.
-num desired=reach*0.75
-if enemy_speed_of_player()<enemy_still_speed&&punch_cd>0; desired=reach*0.6; end
-if enemy.cooldown>enemy_cooldown_min&&punch_cd<=0&&enemy_in_danger()==1; desired=punch_reach+enemy.size*0.8; end
-if d<enemy_min_distance*0.7; desired=enemy_min_distance; end
-enemy_predict enemy_lead
-enemy_engage desired
-enemy_face_motion
-end
+
+// ---------------------------------------------------------------------------
+// update_game — single-player per-frame logic
+// ---------------------------------------------------------------------------
 function update_game
-tick_revive
-update_aim; if finished!=0; return; end
-if player.hp<=0; if try_revive()==0; finish_game 2; return; end; end
-move_player
-if punch_left>0; punch_left=punch_left-dt; if punch_left<0; punch_left=0; end; end
-follow_punch
-// урон игрока наносится только в активное окно его анимации удара
-if punch_left>0&&punch.active==1&&punch.hit==0
-if enemy_in_punch()==1
-punch.hit=1; enemy.hp=enemy.hp-punch_damage; ds_log "hit! enemy hp %g",enemy.hp
-if enemy.hp<=0; finish_game 1; return; end
+    tick_revive
+    update_aim
+    if finished!=0
+        return
+    end
+
+    if player.hp<=0
+        if try_revive()==0
+            finish_game 2
+            return
+        end
+    end
+
+    move_player
+
+    // Tick the punch animation timer.
+    if punch_left>0
+        punch_left=punch_left-dt
+        if punch_left<0
+            punch_left=0
+        end
+    end
+    follow_punch
+
+    // Damage is applied only during the active window of the punch
+    // animation, not at the moment the button is pressed.
+    if punch_left>0&&punch.active==1&&punch.hit==0
+        if enemy_in_punch()==1
+            punch.hit=1
+            enemy.hp=enemy.hp-punch_damage
+            if enemy.hp<=0
+                finish_game 1
+                return
+            end
+        end
+    end
+
+    update_enemy
 end
-end
-update_enemy
-end
+
+// ---------------------------------------------------------------------------
+// clear_remote_punch — wipe the punch buffer for a single slot
+// ---------------------------------------------------------------------------
 function clear_remote_punch num s
-num rb=s*punch_fields, k=0; loop k<punch_fields; arr_set remote_punches,rb+k,0; k=k+1; end
+    num rb=s*punch_fields
+    num k=0
+    loop k<punch_fields
+        arr_set remote_punches,rb+k,0
+        k=k+1
+    end
 end
+
+// ---------------------------------------------------------------------------
+// start_remote_punch — record a freshly received remote punch
+// ---------------------------------------------------------------------------
+// The punch timer is not reset to 0.2 s here; that lets a slow delivery
+// still trigger the active window when the next frame picks the event up.
+// Coordinates and direction come from the network event itself, not from
+// any local interpolation.
 function start_remote_punch num s
-// Счётчик punch не исчезает через 0.2 с, поэтому новый удар будет замечен
-// даже при медленном запросе. Координаты и направление берём из самого события.
-num rb=s*punch_fields
-arr_set remote_punches,rb,1
-arr_set remote_punches,rb+1,net_player_punch_x(s)*screen_w
-arr_set remote_punches,rb+2,net_player_punch_y(s)*screen_h
-arr_set remote_punches,rb+3,net_player_punch_dx(s)
-arr_set remote_punches,rb+4,net_player_punch_dy(s)
-arr_set remote_punches,rb+5,0
+    num rb=s*punch_fields
+    arr_set remote_punches,rb  ,1
+    arr_set remote_punches,rb+1,net_player_punch_x(s)*screen_w
+    arr_set remote_punches,rb+2,net_player_punch_y(s)*screen_h
+    arr_set remote_punches,rb+3,net_player_punch_dx(s)
+    arr_set remote_punches,rb+4,net_player_punch_dy(s)
+    arr_set remote_punches,rb+5,0
 end
+
+// ---------------------------------------------------------------------------
+// read_remotes — pull the latest network snapshot for every slot
+// ---------------------------------------------------------------------------
+// Each of the four network slots has a fixed offset inside the `remotes`
+// array. Fields: present, drawable x/y/angle, hp, alive, punch, network
+// x/y/angle. A slot that just appeared is initialized; one that just left
+// is hidden and its in-flight punch is cleared.
 function read_remotes
-if net_slot()<0; return; end
-// У каждого из четырёх сетевых слотов своё постоянное место в массиве.
-// Поля: present, рисуемые x/y/angle, hp, alive, punch, сетевые x/y/angle.
-num s=0
-loop s<max_players
-num b=s*remote_fields
-if net_player_online(s)==1&&s!=net_slot()
-num x=net_player_x(s)*screen_w, y=net_player_y(s)*screen_h, a=net_player_angle(s)
-if arr_get(remotes,b)==0
-arr_set remotes,b,1; arr_set remotes,b+1,x; arr_set remotes,b+2,y; arr_set remotes,b+3,a
-arr_set remotes,b+6,net_player_punch(s); arr_set remotes,b+7,x; arr_set remotes,b+8,y; arr_set remotes,b+9,a
+    if net_slot()<0
+        return
+    end
+    num s=0
+    loop s<max_players
+        num b=s*remote_fields
+        if net_player_online(s)==1&&s!=net_slot()
+            num x=net_player_x(s)*screen_w
+            num y=net_player_y(s)*screen_h
+            num a=net_player_angle(s)
+            if arr_get(remotes,b)==0
+                // First sighting of this slot: seed the drawable state
+                // with the current snapshot so we don't interpolate from 0.
+                arr_set remotes,b  ,1
+                arr_set remotes,b+1,x
+                arr_set remotes,b+2,y
+                arr_set remotes,b+3,a
+                arr_set remotes,b+6,net_player_punch(s)
+                arr_set remotes,b+7,x
+                arr_set remotes,b+8,y
+                arr_set remotes,b+9,a
+            end
+            arr_set remotes,b+4,net_player_hp(s)
+            arr_set remotes,b+5,net_player_alive(s)
+            arr_set remotes,b+7,x
+            arr_set remotes,b+8,y
+            arr_set remotes,b+9,a
+            arr_set remotes,b+10,net_player_class(s)
+            num p=net_player_punch(s)
+            if p!=arr_get(remotes,b+6)
+                arr_set remotes,b+6,p
+                start_remote_punch s
+            end
+        else if arr_get(remotes,b)==1
+            // Slot just left: hide the model and immediately clear its
+            // in-flight punch so a half-played swing doesn't keep hitting.
+            arr_set remotes,b  ,0
+            arr_set remotes,b+5,0
+            clear_remote_punch s
+        end
+        s=s+1
+    end
 end
-arr_set remotes,b+4,net_player_hp(s); arr_set remotes,b+5,net_player_alive(s)
-arr_set remotes,b+7,x; arr_set remotes,b+8,y; arr_set remotes,b+9,a
-arr_set remotes,b+10,net_player_class(s)
-num p=net_player_punch(s)
-if p!=arr_get(remotes,b+6); arr_set remotes,b+6,p; start_remote_punch s; end
-else if arr_get(remotes,b)==1
-// Слот освободился: прячем модель и сразу гасим её старый удар.
-arr_set remotes,b,0; arr_set remotes,b+5,0; clear_remote_punch s
-end
-s=s+1
-end
-end
+
+// ---------------------------------------------------------------------------
+// smooth_remotes — interpolate the drawable position between snapshots
+// ---------------------------------------------------------------------------
+// Teleports are not smeared across the screen: when the gap to the latest
+// network snapshot is larger than remote_snap, the drawable state jumps
+// to it immediately.
 function smooth_remotes
-// Между редкими сетевыми снимками двигаем модель каждый кадр. Телепорт не
-// размазываем по экрану: большой разрыв применяется сразу.
-num i=0, t=clamp(dt*remote_smooth,0,1)
-loop i<max_players
-num b=i*remote_fields, dx=arr_get(remotes,b+7)-arr_get(remotes,b+1), dy=arr_get(remotes,b+8)-arr_get(remotes,b+2)
-if dx*dx+dy*dy>remote_snap*remote_snap; arr_set remotes,b+1,arr_get(remotes,b+7); arr_set remotes,b+2,arr_get(remotes,b+8)
-else; arr_set remotes,b+1,arr_get(remotes,b+1)+dx*t; arr_set remotes,b+2,arr_get(remotes,b+2)+dy*t; end
-num da=arr_get(remotes,b+9)-arr_get(remotes,b+3); if da>pi; da=da-2*pi; end; if da<0-pi; da=da+2*pi; end
-arr_set remotes,b+3,arr_get(remotes,b+3)+da*t
-i=i+1
+    num i=0
+    num t=clamp(dt*remote_smooth,0,1)
+    loop i<max_players
+        num b=i*remote_fields
+        num dx=arr_get(remotes,b+7)-arr_get(remotes,b+1)
+        num dy=arr_get(remotes,b+8)-arr_get(remotes,b+2)
+        if dx*dx+dy*dy>remote_snap*remote_snap
+            // Big jump: snap, don't interpolate.
+            arr_set remotes,b+1,arr_get(remotes,b+7)
+            arr_set remotes,b+2,arr_get(remotes,b+8)
+        else
+            // Small gap: lerp toward the network position this frame.
+            arr_set remotes,b+1,arr_get(remotes,b+1)+dx*t
+            arr_set remotes,b+2,arr_get(remotes,b+2)+dy*t
+        end
+        // Lerp the angle, handling the wrap at +/-pi so the sprite spins
+        // the short way around instead of going the long way.
+        num da=arr_get(remotes,b+9)-arr_get(remotes,b+3)
+        if da>pi
+            da=da-2*pi
+        end
+        if da<0-pi
+            da=da+2*pi
+        end
+        arr_set remotes,b+3,arr_get(remotes,b+3)+da*t
+        i=i+1
+    end
 end
-end
+
+// ---------------------------------------------------------------------------
+// update_remote_punches — tick each in-flight remote punch
+// ---------------------------------------------------------------------------
+// Visible animation and damage share the same `punch_time` window so they
+// always agree. The moment a punch lands (or its timer runs out) its slot
+// is freed.
 function update_remote_punches
-// Урон и видимая анимация живут одинаковые punch_time секунд.
-num i=0
-loop i<max_players
-num rb=i*punch_fields
-if arr_get(remote_punches,rb)==1
-num tr=arr_get(remote_punches,rb+5)+dt; arr_set remote_punches,rb+5,tr
-if tr>=punch_time; arr_set remote_punches,rb,0
-else if in_punch_box(arr_get(remote_punches,rb+1),arr_get(remote_punches,rb+2),arr_get(remote_punches,rb+3),arr_get(remote_punches,rb+4),player.x,player.y)==1
-arr_set remote_punches,rb,0
-if revive_prot<=0&&player.hp>0
-take_damage punch_damage; ds_log "hit! hp %g",player.hp
-if player.hp<=0
-player.hp=0
-if try_revive()==1; net_publish player.x/screen_w,player.y/screen_h,player.angle,player.hp,1
-else; net_publish player.x/screen_w,player.y/screen_h,player.angle,0,0; finish_game 2; end
+    num i=0
+    loop i<max_players
+        num rb=i*punch_fields
+        if arr_get(remote_punches,rb)==1
+            num tr=arr_get(remote_punches,rb+5)+dt
+            arr_set remote_punches,rb+5,tr
+            if tr>=punch_time
+                arr_set remote_punches,rb,0
+            else if in_punch_box(arr_get(remote_punches,rb+1),arr_get(remote_punches,rb+2),arr_get(remote_punches,rb+3),arr_get(remote_punches,rb+4),player.x,player.y)==1
+                arr_set remote_punches,rb,0
+                if revive_prot<=0&&player.hp>0
+                    take_damage punch_damage
+                    if player.hp<=0
+                        player.hp=0
+                        if try_revive()==1
+                            net_publish player.x/screen_w,player.y/screen_h,player.angle,player.hp,1
+                        else
+                            net_publish player.x/screen_w,player.y/screen_h,player.angle,0,0
+                            finish_game 2
+                        end
+                    end
+                end
+            end
+        end
+        i=i+1
+    end
 end
-end
-end
-end
-i=i+1
-end
-end
+
+// ---------------------------------------------------------------------------
+// online_try_win — check whether the local player has won the online match
+// ---------------------------------------------------------------------------
+// Win condition: there was a living opponent earlier in the match, and now
+// every slot that is still in the room is dead. Disconnects don't count
+// as kills, so at least one dead opponent is required.
 function online_try_win
-// Победа в онлайне: был живой соперник, и теперь все, кто ещё в комнате, лежат.
-// Выход из игры не считается — мёртвых должно быть хотя бы один.
-if finished!=0||online_ready==0||player.hp<=0; return; end
-num living=0, dead=0, s=0
-loop s<max_players
-num b=s*remote_fields
-if arr_get(remotes,b)==1
-if arr_get(remotes,b+5)==1; living=living+1; match_seen_foe=1; else; dead=dead+1; end
+    if finished!=0||online_ready==0||player.hp<=0
+        return
+    end
+    num living=0
+    num dead=0
+    num s=0
+    loop s<max_players
+        num b=s*remote_fields
+        if arr_get(remotes,b)==1
+            if arr_get(remotes,b+5)==1
+                living=living+1
+                match_seen_foe=1
+            else
+                dead=dead+1
+            end
+        end
+        s=s+1
+    end
+    if match_seen_foe==1&&living==0&&dead>=1
+        finish_game 1
+    end
 end
-s=s+1
-end
-if match_seen_foe==1&&living==0&&dead>=1; finish_game 1; end
-end
+
+// ---------------------------------------------------------------------------
+// update_online — per-frame online logic
+// ---------------------------------------------------------------------------
 function update_online
-tick_revive
-chat_update
-update_disco
-if online_ready==0&&net_slot()>=0; place_online; end
-read_remotes; smooth_remotes; update_aim
-online_try_win
-if finished!=0||online_ready==0; return; end
-if player.hp<=0; if try_revive()==0; finish_game 2; return; end; end
-move_player
-if punch_left>0; punch_left=punch_left-dt; if punch_left<0; punch_left=0; end; end
-follow_punch; if punch.active==1&&punch_left<=0; punch.active=0; end
-// Игра обновляет локальную копию каждый кадр, а сетевой поток отправляет
-// последний снимок отдельно — рендер никогда не ждёт HTTP.
-num alive=1; if player.hp<=0; alive=0; end
-net_publish player.x/screen_w,player.y/screen_h,player.angle,player.hp,alive
-update_remote_punches
+    tick_revive
+    chat_update
+    update_disco
+
+    // Place the local player once we know which slot we own.
+    if online_ready==0&&net_slot()>=0
+        place_online
+    end
+
+    read_remotes
+    smooth_remotes
+    update_aim
+
+    online_try_win
+    if finished!=0||online_ready==0
+        return
+    end
+
+    if player.hp<=0
+        if try_revive()==0
+            finish_game 2
+            return
+        end
+    end
+
+    move_player
+
+    if punch_left>0
+        punch_left=punch_left-dt
+        if punch_left<0
+            punch_left=0
+        end
+    end
+    follow_punch
+    if punch.active==1&&punch_left<=0
+        // Animation finished, allow a new swing to be requested.
+        punch.active=0
+    end
+
+    // The local snapshot is published every frame, and the network layer
+    // ships the latest snapshot on its own — the render never waits on
+    // HTTP. Alive flag mirrors HP for cheap downstream checks.
+    num alive=1
+    if player.hp<=0
+        alive=0
+    end
+    net_publish player.x/screen_w,player.y/screen_h,player.angle,player.hp,alive
+
+    update_remote_punches
 end
+
+// ---------------------------------------------------------------------------
+// fire_punch — start a new player punch
+// ---------------------------------------------------------------------------
+// We don't spawn a projectile; we just arm the hitbox and trigger the
+// animation. punch_cooldown (0.3 s) is the minimum gap between two
+// swings. The damage itself is applied in update_game() during the active
+// window of the animation, not at the moment the button is pressed.
 function fire_punch
-// удар: пуля не вылетает — хитбокс и удар, спрайт обычный -> ordinary_punch
-// между ударами пауза punch_cooldown (0.3 c); сам урон наносится в update_game
-// во время анимации удара (пока punch_left>0), а не мгновенно в момент нажатия
-if punch_cd>0; return; end
-punch.x=player.x; punch.y=player.y; punch.dx=cos(player.angle); punch.dy=sin(player.angle); punch.active=1; punch.hit=0; punch.shot=punch.shot+1; punch_left=punch_time; punch_cd=punch_cooldown
-if game_state==5; net_publish_punch punch.x/screen_w,punch.y/screen_h,punch.dx,punch.dy,punch.shot; end
+    if punch_cd>0
+        return
+    end
+    punch.x=player.x
+    punch.y=player.y
+    punch.dx=cos(player.angle)
+    punch.dy=sin(player.angle)
+    punch.active=1
+    punch.hit=0
+    punch.shot=punch.shot+1
+    punch_left=punch_time
+    punch_cd=punch_cooldown
+    if game_state==5
+        // In online mode, also publish the punch so the other clients
+        // can see the swing and run their own hitbox test against it.
+        net_publish_punch punch.x/screen_w,punch.y/screen_h,punch.dx,punch.dy,punch.shot
+    end
 end
+
+// ---------------------------------------------------------------------------
+// finish_game — end the current match
+// ---------------------------------------------------------------------------
+// result 1 = victory (player wins), 2 = defeat. Winning awards cups once
+// per match. We drop the joystick so a finger that was on screen during
+// the win doesn't carry over into the result screen.
 function finish_game num result
-finished=result; aim_id=-1; aim_a=0; punch.active=0; punch.hit=0; punch_left=0; drop_joy
-if result==1&&cups_awarded==0
-cups_awarded=1; cups=cups+cup_win; save_progress; ds_log "win +%g cups -> %g",cup_win,cups
+    finished=result
+    aim_id=-1
+    aim_a=0
+    punch.active=0
+    punch.hit=0
+    punch_left=0
+    drop_joy
+    if result==1&&cups_awarded==0
+        cups_awarded=1
+        cups=cups+cup_win
+        save_progress
+    end
 end
-end
+
+// ---------------------------------------------------------------------------
+// draw_punch_box — render a punch hitbox
+// ---------------------------------------------------------------------------
+// Shared between the player, the bot and remote opponents. RGB is always
+// 000000; only the alpha changes, so there is never a "red" hitbox.
 function draw_punch_box num x, num y, num dx, num dy, num reach, num width, num alpha
-// Общая отрисовка для себя, бота и сетевого соперника. RGB всегда 000000;
-// меняется только альфа, поэтому красного хитбокса здесь быть не может.
-num aa=floor(clamp(alpha,0,1)*aim_max_alpha)
-if aa>0; line x,y,x+dx*reach,y+dy*reach,width,aa*0x1000000; end
+    num aa=floor(clamp(alpha,0,1)*aim_max_alpha)
+    if aa>0
+        line x,y,x+dx*reach,y+dy*reach,width,aa*0x1000000
+    end
 end
+
+// ---------------------------------------------------------------------------
+// draw_grass — tiled grass background
+// ---------------------------------------------------------------------------
 function draw_grass
-// Только плитки травы (game/assets/Grass.png) — нижний слой под игроком и HUD.
-num y=0; loop y<screen_h; num x=0; loop x<screen_w; tex x,y,GRASS,0,1; x=x+256; end; y=y+256; end
+    num y=0
+    loop y<screen_h
+        num x=0
+        loop x<screen_w
+            tex x,y,GRASS,0,1
+            x=x+256
+        end
+        y=y+256
+    end
 end
+
+// ---------------------------------------------------------------------------
+// draw_field — bottom gameplay layer (background, player, hitbox)
+// ---------------------------------------------------------------------------
 function draw_field
-rect 0,0,screen_w,screen_h,0x33000000
-// Хитбокс рисуется в то же окно, в которое действует удар.
-if aim_a>0&&finished==0; draw_punch_box player.x,player.y,cos(player.angle),sin(player.angle),punch_reach,punch_width,aim_a; end
-num hw=25*cube_scale*player_scale, ps=cube_scale*player_scale
-if punch_left>0; tex player.x-hw,player.y-hw,player_punch_tex(),sprite_a(player.angle),ps; else; tex player.x-hw,player.y-hw,player_idle_tex(),sprite_a(player.angle),ps; end
+    rect 0,0,screen_w,screen_h,0x33000000
+
+    // The hitbox is drawn only while the punch can deal damage, NOT while
+    // simply aiming. This is what makes the hitbox an honest indicator.
+    if aim_a>0&&finished==0
+        draw_punch_box player.x,player.y,cos(player.angle),sin(player.angle),punch_reach,punch_width,aim_a
+    end
+
+    num hw=25*cube_scale*player_scale
+    num ps=cube_scale*player_scale
+    if punch_left>0
+        tex player.x-hw,player.y-hw,player_punch_tex(),sprite_a(player.angle),ps
+    else
+        tex player.x-hw,player.y-hw,player_idle_tex(),sprite_a(player.angle),ps
+    end
 end
+
+// ---------------------------------------------------------------------------
+// draw_controls — joystick and attack button
+// ---------------------------------------------------------------------------
 function draw_controls
-ring joy.x,joy.y,joy.r,4,0x000000; circle joy.x+joy.ox,joy.y+joy.oy,34,0x000000
-circle atk_x,atk_y,70,0xE94560; ring atk_x,atk_y,70,4,0x000000
-text_in_box tr_punch(),atk_x-70,atk_y-70,140,140,0xFFFFFF,0.55
-draw_back
+    ring joy.x,joy.y,joy.r,4,0x000000
+    circle joy.x+joy.ox,joy.y+joy.oy,34,0x000000
+    circle atk_x,atk_y,70,0xE94560
+    ring atk_x,atk_y,70,4,0x000000
+    text_in_box tr_punch(),atk_x-70,atk_y-70,140,140,0xFFFFFF,0.55
+    draw_back
 end
+
+// ---------------------------------------------------------------------------
+// draw_result — overlay shown when a match ends
+// ---------------------------------------------------------------------------
 function draw_result str title, str note
-rect 0,0,screen_w,screen_h,0x99000000; num y=screen_h/2-85; roundrect screen_w/2-165,y,330,180,24,0x5F10A0; ctext title,y+28,0xFFFFFF; ctext note,y+68,0xFFFFFF
-if cups_awarded==1; ctext tr_cups_reward(),y+100,0xFFD54A; end
-ctext tr_tap_to_return(),y+132,0xFFCDD2
+    rect 0,0,screen_w,screen_h,0x99000000
+    num y=screen_h/2-85
+    roundrect screen_w/2-165,y,330,180,24,0x5F10A0
+    ctext title,y+28,0xFFFFFF
+    ctext note ,y+68,0xFFFFFF
+    if cups_awarded==1
+        ctext tr_cups_reward(),y+100,0xFFD54A
+    end
+    ctext tr_tap_to_return(),y+132,0xFFCDD2
 end
+
+// ---------------------------------------------------------------------------
+// draw_game — single-player render
+// ---------------------------------------------------------------------------
 function draw_game
-// Прицел удара бота: такая же чёрная полупрозрачная полоса, как у игрока —
-// показывает, куда попадёт удар (замах и активное окно), можно увернуться.
-draw_grass
-draw_field
-if (enemy.state==1||enemy.state==2)&&finished==0; draw_punch_box enemy.x,enemy.y,cos(enemy.angle),sin(enemy.angle),enemy_punch_reach,enemy_punch_width,1; end
-num ehw=25*cube_scale*enemy_scale, es=cube_scale*enemy_scale
-if enemy.state==1||enemy.state==2; tex enemy.x-ehw,enemy.y-ehw,PUNCH_TEX,sprite_a(enemy.angle),es
-else; tex enemy.x-ehw,enemy.y-ehw,ORDINARY_TEX,sprite_a(enemy.angle),es; end
-num w=screen_w/4
-hud_bar 20,20,w,28,player.hp,player.max_hp,0x7ED321,0; hud_bar screen_w-w-20,20,w,28,enemy.hp,enemy.max_hp,0xE94560,1
-draw_controls
-if finished==1; draw_result tr_victory(),tr_opponent_defeated(); else if finished==2; draw_result tr_defeat(),tr_opponent_won(); end
+    // The bot's aim bar is the same translucent black bar as the player's,
+    // shown during windup and the active window. It can be dodged.
+    draw_grass
+    draw_field
+    if (enemy.state==1||enemy.state==2)&&finished==0
+        draw_punch_box enemy.x,enemy.y,cos(enemy.angle),sin(enemy.angle),enemy_punch_reach,enemy_punch_width,1
+    end
+    num ehw=25*cube_scale*enemy_scale
+    num es=cube_scale*enemy_scale
+    if enemy.state==1||enemy.state==2
+        tex enemy.x-ehw,enemy.y-ehw,PUNCH_TEX,sprite_a(enemy.angle),es
+    else
+        tex enemy.x-ehw,enemy.y-ehw,ORDINARY_TEX,sprite_a(enemy.angle),es
+    end
+
+    num w=screen_w/4
+    hud_bar 20,20,w,28,player.hp,player.max_hp,0x7ED321,0
+    hud_bar screen_w-w-20,20,w,28,enemy.hp,enemy.max_hp,0xE94560,1
+    draw_controls
+
+    if finished==1
+        draw_result tr_victory(),tr_opponent_defeated()
+    else if finished==2
+        draw_result tr_defeat(),tr_opponent_won()
+    end
 end
+
+// ---------------------------------------------------------------------------
+// disco_color — compute the current flash color
+// ---------------------------------------------------------------------------
+// Sinusoidal RGB blend with phase-shifted channels for a smooth rainbow
+// cycle. The expression is passed directly to C, so plain shifts and
+// (int) casts are used. The alpha (top byte) also pulses so the screen
+// flashes instead of just tinting.
+//
+// Frequencies are 2x the original: the screen flashes and cycles much
+// faster. Shifts happen in `unsigned` so (int)a<<24 doesn't overflow.
 function disco_color num phase
-// Цвет для диско-пульсации: перелив RGB по синусоидам. Выражение проходит
-// напрямую в C, поэтому здесь работают сдвиги и (int)-приведения. Альфа
-// (старший байт) пульсирует, чтобы экран мигал, а не просто лил один цвет.
-// Частоты ×2 от исходных: экран мигает и переливается заметно быстрее.
-// Сдвиги делаются в unsigned, чтобы (int)a<<24 не был переполнением int.
-num r=127+127*sin(phase)
-num g=127+127*sin(phase+2.094)
-num b=127+127*sin(phase+4.188)
-num a=55+90*(0.5+0.5*sin(disco_t*16))
-return ((((unsigned)(int)a)<<24)|(((unsigned)(int)r)<<16)|(((unsigned)(int)g)<<8)|((unsigned)(int)b))
+    num r=127+127*sin(phase)
+    num g=127+127*sin(phase+2.094)
+    num b=127+127*sin(phase+4.188)
+    num a=55+90*(0.5+0.5*sin(disco_t*16))
+    return ((((unsigned)(int)a)<<24)|(((unsigned)(int)r)<<16)|(((unsigned)(int)g)<<8)|((unsigned)(int)b))
 end
+
+// ---------------------------------------------------------------------------
+// draw_disco — render the disco event overlay
+// ---------------------------------------------------------------------------
+// "Disco" event: the screen flashes and cycles colors. If the
+// epilepsy-safe mode is on (disco_safe==1) or the event is not active
+// (event_mode==0) we draw nothing, so photosensitive players are safe.
+// The disco ball sprite was removed — only the fast screen flash and a
+// pulsing ring remain.
 function draw_disco
-// «Диско»-ивент: экран мерцает и переливается светом. Если включён безопасный
-// для эпилептиков режим (disco_safe==1) или ивента нет (event_mode==0) — ничего
-// не моргает, чтобы люди не ослепли. Диско-шар убран — остаются только
-// быстрое мерцание экрана и пульсирующий контур.
-if event_mode==0||disco_safe==1; return; end
-num col=disco_color(disco_t*18)
-rect 0,0,screen_w,screen_h,col
-// Пульсирующий белый кружок-контур (без заливки) — мерцает вместе с диско.
-num ct=disco_t*12
-num r=110+40*sin(ct)
-ring screen_w/2,screen_h/2,r,7,0xC0FFFFFF
+    if event_mode==0||disco_safe==1
+        return
+    end
+    num col=disco_color(disco_t*18)
+    rect 0,0,screen_w,screen_h,col
+
+    // Pulsing white outline ring (no fill) — flashes in sync with the
+    // screen so the visual feedback is obvious.
+    num ct=disco_t*12
+    num r=110+40*sin(ct)
+    ring screen_w/2,screen_h/2,r,7,0xC0FFFFFF
 end
+
+// ---------------------------------------------------------------------------
+// update_disco — tick the disco timer
+// ---------------------------------------------------------------------------
+// The timer only advances while the event is active AND not suppressed
+// by the safety mode. Otherwise it is reset to 0.
 function update_disco
-// Таймер диско двигается только пока ивент активен и не выключен защитой.
-event_mode=net_event()
-if event_mode==1&&disco_safe==0; disco_t=disco_t+dt; else; disco_t=0; end
+    event_mode=net_event()
+    if event_mode==1&&disco_safe==0
+        disco_t=disco_t+dt
+    else
+        disco_t=0
+    end
 end
+
+// ---------------------------------------------------------------------------
+// draw_online — online match render
+// ---------------------------------------------------------------------------
 function draw_online
-// Трава — самый нижний слой.
-draw_grass
-// Диско-мерцание выше травы, но ниже игроков и HUD.
-draw_disco
-// Затемнение, игрок, ник и весь остальной UI рисуется поверх.
-draw_field
-num hw=25*cube_scale*player_scale, ps=cube_scale*player_scale
-str myn=net_player_nick(net_slot())
-if str_len(myn)>0; num mnw=text_ink_width(myn)*0.5; text_scaled myn,player.x-mnw/2,player.y-hw-26,0xFFFFFF,0.5; end
-num i=0
-loop i<max_players
-num b=i*remote_fields
-if arr_get(remotes,b+5)==1
-num rx=arr_get(remotes,b+1), ry=arr_get(remotes,b+2), ra=arr_get(remotes,b+3), slot=i, rb=slot*punch_fields
-str rn=net_player_nick(slot)
-num rcls=arr_get(remotes,b+10)
-if arr_get(remote_punches,rb)==1
-// Тот же helper, что у игрока: чёрный хитбокс и точно такое же активное окно.
-num px=arr_get(remote_punches,rb+1), py=arr_get(remote_punches,rb+2), pdx=arr_get(remote_punches,rb+3), pdy=arr_get(remote_punches,rb+4)
-draw_punch_box px,py,pdx,pdy,punch_reach,punch_width,1
-tex rx-hw,ry-hw,class_punch_tex(rcls),sprite_a(atan2(pdy,pdx)),ps
-else; tex rx-hw,ry-hw,class_idle_tex(rcls),sprite_a(ra),ps; end
-if str_len(rn)>0; num rnw=text_ink_width(rn)*0.5; text_scaled rn,rx-rnw/2,ry-hw-26,0xFFFFFF,0.5; end
+    // Grass is the bottom-most layer.
+    draw_grass
+    // Disco flash sits above the grass but below players and HUD so it
+    // never hides the game.
+    draw_disco
+    // Darkening, local player, nick labels and the rest of the UI on top.
+    draw_field
+
+    num hw=25*cube_scale*player_scale
+    num ps=cube_scale*player_scale
+    str myn=net_player_nick(net_slot())
+    if str_len(myn)>0
+        num mnw=text_ink_width(myn)*0.5
+        text_scaled myn,player.x-mnw/2,player.y-hw-26,0xFFFFFF,0.5
+    end
+
+    num i=0
+    loop i<max_players
+        num b=i*remote_fields
+        if arr_get(remotes,b+5)==1
+            num rx=arr_get(remotes,b+1)
+            num ry=arr_get(remotes,b+2)
+            num ra=arr_get(remotes,b+3)
+            num slot=i
+            num rb=slot*punch_fields
+            str rn=net_player_nick(slot)
+            num rcls=arr_get(remotes,b+10)
+            if arr_get(remote_punches,rb)==1
+                // Same helper as for the local player: black hitbox and
+                // identical active window.
+                num px=arr_get(remote_punches,rb+1)
+                num py=arr_get(remote_punches,rb+2)
+                num pdx=arr_get(remote_punches,rb+3)
+                num pdy=arr_get(remote_punches,rb+4)
+                draw_punch_box px,py,pdx,pdy,punch_reach,punch_width,1
+                tex rx-hw,ry-hw,class_punch_tex(rcls),sprite_a(atan2(pdy,pdx)),ps
+            else
+                tex rx-hw,ry-hw,class_idle_tex(rcls),sprite_a(ra),ps
+            end
+            if str_len(rn)>0
+                num rnw=text_ink_width(rn)*0.5
+                text_scaled rn,rx-rnw/2,ry-hw-26,0xFFFFFF,0.5
+            end
+        end
+        i=i+1
+    end
+
+    num w=screen_w/3
+    hud_bar 20,20,w,28,player.hp,player.max_hp,0x7ED321,0
+    draw_controls
+    draw_chat
+
+    num st=net_status()
+    num sy=back_y+btn_h+18
+    if st==4
+        ctext tr_no_connection(),sy,0xFF8A80
+        ctext tr_reconnecting() ,sy+32,0xFFF176
+    else if st==1
+        ctext tr_connecting(),sy,0xFFF176
+    end
+    if finished==2
+        draw_result tr_defeat(),tr_you_were_defeated()
+    end
 end
-i=i+1
-end
-num w=screen_w/3
-hud_bar 20,20,w,28,player.hp,player.max_hp,0x7ED321,0
-draw_controls; draw_chat
-num st=net_status(), sy=back_y+btn_h+18
-if st==4; ctext tr_no_connection(),sy,0xFF8A80; ctext tr_reconnecting(),sy+32,0xFFF176
-else if st==1; ctext tr_connecting(),sy,0xFFF176; end
-if finished==2; draw_result tr_defeat(),tr_you_were_defeated(); end
-end
+
+// ---------------------------------------------------------------------------
+// drop_joy — release the joystick (no finger is holding it)
+// ---------------------------------------------------------------------------
 function drop_joy
-joy_id=-1; joy.dx=0; joy.dy=0; joy.ox=0; joy.oy=0
+    joy_id=-1
+    joy.dx=0
+    joy.dy=0
+    joy.ox=0
+    joy.oy=0
 end
+
+// ---------------------------------------------------------------------------
+// joy_touch — joystick touch handling
+// ---------------------------------------------------------------------------
+// The joystick uses a single virtual touch (joy_id) so it doesn't conflict
+// with other touches. We cap the lever to the joystick radius and scale
+// the (dx,dy) to a unit direction used by move_player.
 function joy_touch num x, num y, num action, num id
-if action==1; if id==joy_id; drop_joy; end; return; end; if action==0; if joy_id!=-1; return; end; if sqrt((x-joy.x)*(x-joy.x)+(y-joy.y)*(y-joy.y))>150; return; end; joy_id=id; end; if id!=joy_id; return; end; num dx=x-joy.x, dy=y-joy.y, d=sqrt(dx*dx+dy*dy); if d>joy.r; joy.dx=dx/d; joy.dy=dy/d; joy.ox=joy.dx*joy.r; joy.oy=joy.dy*joy.r; else; joy.dx=dx/joy.r; joy.dy=dy/joy.r; joy.ox=dx; joy.oy=dy; end
+    if action==1
+        // Lift: release the joystick if this finger owned it.
+        if id==joy_id
+            drop_joy
+        end
+        return
+    end
+    if action==0
+        // Touch-down: take ownership if no one is using the joystick
+        // and the tap is within the (slightly enlarged) outer ring.
+        if joy_id!=-1
+            return
+        end
+        if sqrt((x-joy.x)*(x-joy.x)+(y-joy.y)*(y-joy.y))>150
+            return
+        end
+        joy_id=id
+    end
+    if id!=joy_id
+        return
+    end
+    num dx=x-joy.x
+    num dy=y-joy.y
+    num d=sqrt(dx*dx+dy*dy)
+    if d>joy.r
+        // Beyond the rim: clamp to the rim, keep direction.
+        joy.dx=dx/d
+        joy.dy=dy/d
+        joy.ox=joy.dx*joy.r
+        joy.oy=joy.dy*joy.r
+    else
+        // Inside: scale to the rim, so the lever visually tracks the finger.
+        joy.dx=dx/joy.r
+        joy.dy=dy/joy.r
+        joy.ox=dx
+        joy.oy=dy
+    end
 end
+
+// ---------------------------------------------------------------------------
+// touch_game — game/online touch dispatch
+// ---------------------------------------------------------------------------
 function touch_game num x, num y, num action, num id
-if finished!=0; if action==0; start_transition 0; end; return; end; if action==3; aim_id=-1; drop_joy; return; end; if game_state==5&&touch_chat(x,y,action)==1; return; end; if back_hit(x,y)==1&&action!=2; start_transition 0; return; end; if chat_open==1; return; end; if action==0&&sqrt((x-atk_x)*(x-atk_x)+(y-atk_y)*(y-atk_y))<=96; aim_id=id; return; end; if action==1&&id==aim_id; aim_id=-1; if game_state==1||online_ready==1; fire_punch; end; return; end; joy_touch x,y,action,id
+    if finished!=0
+        if action==0
+            start_transition 0
+        end
+        return
+    end
+    if action==3
+        // Cancel (gesture lost): drop both virtual touches.
+        aim_id=-1
+        drop_joy
+        return
+    end
+    if game_state==5&&touch_chat(x,y,action)==1
+        return
+    end
+    if back_hit(x,y)==1&&action!=2
+        start_transition 0
+        return
+    end
+    if chat_open==1
+        return
+    end
+    if action==0&&sqrt((x-atk_x)*(x-atk_x)+(y-atk_y)*(y-atk_y))<=96
+        aim_id=id
+        return
+    end
+    if action==1&&id==aim_id
+        aim_id=-1
+        if game_state==1||online_ready==1
+            fire_punch
+        end
+        return
+    end
+    joy_touch x,y,action,id
 end

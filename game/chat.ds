@@ -1,102 +1,241 @@
+// chat.ds — full-screen online chat panel
+//
+// The chat is a single overlay that takes over the whole screen when open.
+// It has no internal panel or padding, so messages can use the full width.
+// The system keyboard is only shown when the user taps the input field.
+// Messages that scroll off the top are trimmed automatically.
+
+// chat_open — 1 while the chat overlay is on screen.
+// chat_input — buffer that mirrors the system keyboard text. We keep our
+// own copy because keyboard_get_text() returns a pooled string that is
+// only valid for the current frame, so we cannot hold it across frames.
 num chat_open=0
 str chat_input=""
-// Полноэкранный онлайн-чат: без рамок и отступов, сообщения на весь экран.
-// Системная клавиатура открывается только по нажатию на поле ввода.
-// Старые сообщения, которые уже не влезают на экран, удаляются сами.
 
+// ---------------------------------------------------------------------------
+// chat_button — small pill button used inside the chat panel (Send, etc.)
+// ---------------------------------------------------------------------------
 function chat_button str label, num x, num y, num w, num h
-roundrect x,y,w,h,20,0x5F10A0
-text_in_box label,x,y,w,h,0xFFFFFF,0.5
+    roundrect x,y,w,h,20,0x5F10A0
+    text_in_box label,x,y,w,h,0xFFFFFF,0.5
 end
+
+// X coordinate of the close button in the top bar.
 function chat_close_x
-return screen_w-btn_w-16
+    return screen_w-btn_w-16
 end
+
+// Y of the first message line (just under the top bar).
 function chat_msg_top
-return back_y+btn_h+12
+    return back_y+btn_h+12
 end
+
+// Y of the input field at the bottom of the screen.
 function chat_input_y
-return screen_h-72
+    return screen_h-72
 end
+
+// Maximum number of message lines that fit between the top bar and the
+// input field. Used both for layout and for trimming old messages.
 function chat_visible_limit
-num ly=chat_msg_top(), iy=chat_input_y(), lh=iy-ly-12, line_h=28
-num maxl=floor(lh/line_h); if maxl<1; maxl=1; end
-return maxl
+    num ly=chat_msg_top()
+    num iy=chat_input_y()
+    num lh=iy-ly-12
+    num line_h=28
+    num maxl=floor(lh/line_h)
+    if maxl<1
+        maxl=1
+    end
+    return maxl
 end
+
+// ---------------------------------------------------------------------------
+// chat_sync_input — pull the latest text from the keyboard buffer
+// ---------------------------------------------------------------------------
+// We always read the system keyboard fresh. A previous implementation tried
+// to be clever and compare against the previous buffer; that left the field
+// empty whenever the string pointer changed but the IME already had text.
 function chat_sync_input
-// Всегда берём актуальный буфер клавиатуры. Раньше сравнение raw/chat_input
-// могло оставить поле пустым, если указатель на строку уже не совпадал с
-// тем, что рисует игра, хотя символы в IME уже были.
-chat_input=keyboard_get_text()
+    chat_input=keyboard_get_text()
 end
+
+// ---------------------------------------------------------------------------
+// chat_send — submit the current input as a chat message
+// ---------------------------------------------------------------------------
 function chat_send
-chat_sync_input
-if str_len(chat_input)==0; return; end
-net_chat_send chat_input; ds_log "chat: %s",chat_input
-chat_input=""; keyboard_clear
-net_chat_trim chat_visible_limit()
+    // Re-sync in case the user tapped Send without an update tick yet.
+    chat_sync_input
+    if str_len(chat_input)==0
+        return
+    end
+
+    net_chat_send chat_input
+
+    // Clear our local buffer AND the system keyboard so the next message
+    // starts from empty. Then trim the history so we never render more
+    // lines than fit on screen.
+    chat_input=""
+    keyboard_clear
+    net_chat_trim chat_visible_limit()
 end
+
+// ---------------------------------------------------------------------------
+// chat_update — per-frame input handling
+// ---------------------------------------------------------------------------
+// Input is handled in update() rather than draw() so Enter and the input
+// buffer don't depend on the render frame rate.
 function chat_update
-// Ввод обрабатываем в update, а не в draw: иначе Enter и текст зависят от кадра.
-if game_state!=5||chat_open==0; return; end
-chat_sync_input
-if keyboard_enter_pressed()==1; chat_send; end
-if net_chat_count()>chat_visible_limit(); net_chat_trim chat_visible_limit(); end
+    if game_state!=5||chat_open==0
+        return
+    end
+
+    chat_sync_input
+
+    if keyboard_enter_pressed()==1
+        chat_send
+    end
+
+    // Trim if the remote side accumulated more messages than we can show.
+    if net_chat_count()>chat_visible_limit()
+        net_chat_trim chat_visible_limit()
+    end
 end
+
+// ---------------------------------------------------------------------------
+// draw_chat — render the chat overlay
+// ---------------------------------------------------------------------------
 function draw_chat
-if game_state!=5; return; end
-if chat_open==0
-// В закрытом состоянии видна только кнопка: сообщения не просвечивают поверх игры.
-button tr_chat(),16,150,140,48
-return
+    if game_state!=5
+        return
+    end
+
+    if chat_open==0
+        // Closed state: only show the entry button, no peeking at messages.
+        button tr_chat(),16,150,140,48
+        return
+    end
+
+    // Open state: full-screen dark backdrop, top bar with title + close,
+    // scrollable message list, and the input row at the bottom.
+    rect 0,0,screen_w,screen_h,0xFF1E1E2F
+
+    num cx=chat_close_x()
+    text_in_box tr_online_chat(),16,back_y,cx-32,btn_h,0xFFFFFF,1
+    button tr_close(),cx,back_y,btn_w,btn_h
+
+    num lx=16
+    num lw=screen_w-32
+    num iy=chat_input_y()
+    num ih=52
+    num ly=chat_msg_top()
+    num line_h=28
+    num maxl=chat_visible_limit()
+
+    // Trim defensively in case a remote peer pushed more lines since update.
+    if net_chat_count()>maxl
+        net_chat_trim maxl
+    end
+
+    num total=net_chat_count()
+    num start=total-maxl
+    if start<0
+        start=0
+    end
+
+    if total==0
+        text_scaled tr_no_messages(),lx,ly,0x8888AA,0.5
+    else
+        num idx=start
+        num yy=ly
+        loop idx<total
+            if yy+line_h>iy-8
+                // Not enough room for another line; stop drawing.
+                idx=total
+            else
+                // Newer messages show the nick, older ones fall back to the
+                // short technical uid so very long rooms still fit.
+                str line=net_chat_uid(idx)+": "+net_chat_text(idx)
+                text_scaled line,lx,yy,0xE0E0FF,0.5
+                yy=yy+line_h
+                idx=idx+1
+            end
+        end
+    end
+
+    // Input row: dark pill on the left, send button on the right.
+    roundrect lx,iy,lw-122,ih,10,0xFF2A2A40
+    chat_sync_input
+    str shown=chat_input
+    if keyboard_visible()==1
+        shown=chat_input+"|"
+    end
+    if str_len(chat_input)==0&&keyboard_visible()==0
+        text_in_field tr_type_message(),lx+10,iy,ih,0x666688,0.55
+    else if str_len(shown)==0
+        text_in_field "|",lx+10,iy,ih,0xFFFFFF,0.55
+    else
+        text_in_field shown,lx+10,iy,ih,0xFFFFFF,0.55
+    end
+    chat_button tr_send(),lx+lw-112,iy,112,ih
 end
-// Тупо на весь экран: без внутренней панели и полей по 20px.
-rect 0,0,screen_w,screen_h,0xFF1E1E2F
-num cx=chat_close_x()
-text_in_box tr_online_chat(),16,back_y,cx-32,btn_h,0xFFFFFF,1
-button tr_close(),cx,back_y,btn_w,btn_h
-num lx=16, lw=screen_w-32, iy=chat_input_y(), ih=52, ly=chat_msg_top(), line_h=28
-num maxl=chat_visible_limit()
-if net_chat_count()>maxl; net_chat_trim maxl; end
-num total=net_chat_count(), start=total-maxl; if start<0; start=0; end
-if total==0
-text_scaled tr_no_messages(),lx,ly,0x8888AA,0.5
-else
-num idx=start, yy=ly
-loop idx<total
-if yy+line_h>iy-8; idx=total
-else
-// Для новых сообщений здесь ник, для старых — короткий технический uid.
-str line=net_chat_uid(idx)+": "+net_chat_text(idx)
-text_scaled line,lx,yy,0xE0E0FF,0.5; yy=yy+line_h; idx=idx+1
-end
-end
-end
-roundrect lx,iy,lw-122,ih,10,0xFF2A2A40
-chat_sync_input
-str shown=chat_input
-if keyboard_visible()==1; shown=chat_input+"|"; end
-if str_len(chat_input)==0&&keyboard_visible()==0; text_in_field tr_type_message(),lx+10,iy,ih,0x666688,0.55
-else if str_len(shown)==0; text_in_field "|",lx+10,iy,ih,0xFFFFFF,0.55
-else; text_in_field shown,lx+10,iy,ih,0xFFFFFF,0.55; end
-chat_button tr_send(),lx+lw-112,iy,112,ih
-end
+
+// ---------------------------------------------------------------------------
+// chat_hit — small helper, point-in-rect test
+// ---------------------------------------------------------------------------
 function chat_hit num x, num y, num bx, num by, num bw, num bh
-if x>=bx&&x<=bx+bw&&y>=by&&y<=by+bh; return 1; end; return 0
+    if x>=bx&&x<=bx+bw&&y>=by&&y<=by+bh
+        return 1
+    end
+    return 0
 end
+
+// ---------------------------------------------------------------------------
+// touch_chat — input dispatch for the chat panel
+// ---------------------------------------------------------------------------
+// Returns 1 when the tap was consumed by the chat (so the game below it
+// should ignore the event).
 function touch_chat num x, num y, num action
-if action!=0; return 0; end
-if chat_open==0
-if chat_hit(x,y,16,150,140,48)==1; chat_open=1; keyboard_hide; return 1; end
-return 0
-end
-if chat_hit(x,y,chat_close_x(),back_y,btn_w,btn_h)==1; chat_open=0; keyboard_hide; return 1; end
-num lx=16, lw=screen_w-32, iy=chat_input_y(), ih=52
-if chat_hit(x,y,lx,iy,lw-122,ih)==1
-// Повторный тап по уже открытому полю не перезапускает IME — иначе
-// composing сбрасывается и только что набранное пропадает с экрана.
-if keyboard_visible()==0; keyboard_show; end
-return 1
-end
-if chat_hit(x,y,lx+lw-112,iy,112,ih)==1; chat_send; return 1; end
-return 1
+    if action!=0
+        return 0
+    end
+
+    if chat_open==0
+        // Tap on the entry button opens the panel.
+        if chat_hit(x,y,16,150,140,48)==1
+            chat_open=1
+            keyboard_hide
+            return 1
+        end
+        return 0
+    end
+
+    // Tap on the close button: hide keyboard, close panel.
+    if chat_hit(x,y,chat_close_x(),back_y,btn_w,btn_h)==1
+        chat_open=0
+        keyboard_hide
+        return 1
+    end
+
+    num lx=16
+    num lw=screen_w-32
+    num iy=chat_input_y()
+    num ih=52
+
+    if chat_hit(x,y,lx,iy,lw-122,ih)==1
+        // Tap on the input field. Reopening the IME while it is already
+        // visible would reset the composing state and lose the half-typed
+        // word, so we only call keyboard_show() if needed.
+        if keyboard_visible()==0
+            keyboard_show
+        end
+        return 1
+    end
+
+    if chat_hit(x,y,lx+lw-112,iy,112,ih)==1
+        chat_send
+        return 1
+    end
+
+    // Eat any other tap inside the open panel so the game below doesn't react.
+    return 1
 end
