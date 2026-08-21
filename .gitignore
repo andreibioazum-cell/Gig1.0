@@ -13,4 +13,5 @@ progress.dat
 test/net_test.c
 test/game_test
 test/shot_*.bmp
+test/shots/
 test/ai_sim

@@ -8,7 +8,8 @@ num game_state=0, language=0, t_dir=0, t_target=0, t_fade=0, transition_duration
 // Онлайн: в remotes по 11 чисел, в remote_punches по 6. Координаты соперника
 // плавно догоняют сетевую цель; большой скачок считается телепортом.
 // Поля remotes: present, x, y, angle, hp, alive, punch, netx, nety, netangle, class.
-num remote_fields=11, punch_fields=6, remote_smooth=14, remote_snap=220
+// Поля remote_gifts: active, x, y, dx, dy, t, счётчик броска, boom_t, boom_x, boom_y.
+num remote_fields=11, punch_fields=6, gift_fields=10, remote_smooth=14, remote_snap=220
 // Поведение бота: enemy_dodge_time/cooldown — окно и перезарядка
 // уклонения от удара игрока;
 // enemy_cooldown_min/max — случайная перезарядка удара бота: каждый раз новое
@@ -36,10 +37,12 @@ num enemy_move_smooth=18, enemy_face_speed=14, enemy_face_max_speed=42, enemy_at
 num login_field=1, login_status=0, login_after=0
 num login_ox=0, login_oy=-20, login_fh=50, login_lab=28, login_lab_ox=12
 str GRASS="grass.png", ORDINARY_TEX="ordinary.png", PUNCH_TEX="ordinary_punch.png", AZUM_TEX="azum.png", AZUM_PUNCH_TEX="azum_punch.png", SANTA_TEX="santa.png", SANTA_PUNCH_TEX="santa_punch.png", CANDY_TEX="candy.png", FIREBASE="https://cubicbattleserver-19ae2-default-rtdb.firebaseio.com", ROOM="main", login_nick="", login_pass=""
-// Диско-ивент из Firebase: event_mode=1 — «диско» включено (всё мигает),
+// Ивенты из Firebase (узел /event, запускаются из админ-панели):
+// event_mode=0 — ивента нет, 1 — «диско» (всё мигает), 2 — снегопад.
 // disco_safe=1 — безопасный для эпилептиков режим (мигание выключено),
-// disco_t — таймер для плавной смены цветов.
-num event_mode=0, disco_safe=0, disco_t=0
+// disco_t — таймер для плавной смены цветов, event_t — общий таймер ивента
+// (идёт всегда, по нему падает снег).
+num event_mode=0, disco_safe=0, disco_t=0, event_t=0, event_flakes=64
 // Классы: player_class 0 = Обычный, 1 = Азум (одно возрождение за бой).
 // azum_revived — уже тратили воскрешение, revive_prot — неуязвимость после
 // возрождения. Вспышки на экране нет: Азум просто встаёт в случайной точке.
@@ -53,12 +56,21 @@ num player_level=0, levels_unlocked=0, max_level=5, level_base_cost=30, level_co
 // заморозкой врага (santa_freeze секунд, ходит со скоростью santa_freeze_slow).
 // Суператака — подарок-бомба: летит вперёд super_range, взрывается по радиусу
 // super_radius, наносит super_damage и надолго замораживает (враг еле ходит).
-// Работает против бота в соло; в онлайне посох бьёт сильнее, супер скрыт.
+// Работает и в соло против бота, и в онлайне: заморозку и урон от подарка
+// каждый клиент применяет к себе сам, поэтому эффект виден у всех.
 num santa_damage=2, santa_freeze=1.0, santa_freeze_slow=0.35
 num super_damage=3, super_freeze=3.0, super_freeze_slow=0.12
 num super_cd_time=6.0, super_speed=420, super_range=260, super_radius=130, boom_time=0.45
 // Магазин: Дед Мороз покупается за леденцы (детерминированно).
 num santa_candy_cost=100
+// Админ-панель (game_state 11): список команд с поиском, как в консоли админа.
+// admin_msg_t — сколько ещё секунд показывать ответ команды,
+// admin_search — строка поиска, admin_min=1 — панель свёрнута в заголовок.
+num admin_msg_t=0, admin_min=0, admin_cmd_count=8, class_msg_kind=0
+str admin_search="", admin_msg=""
+// Ники со статусом администратора: им доступна панель команд и ивентов.
+str ADMIN_NICK_1="Dimasi4ek229", ADMIN_NICK_2="qwertyuiopaj1234"
+
 // Леденцы-пикапы на карте (соло): candy_count штук разбросаны по случайным
 // точкам экрана (отступ candy_margin от краёв), за каждый подбор +candy_give.
 // Собранный леденец исчезает, и на его месте появляется новый в случайном месте.

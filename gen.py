@@ -66,9 +66,12 @@ def main():
     note = ""
     if hasattr(compiler,'warnings') and compiler.warnings:
         note = f" with {compiler.warnings} warning(s)"
-    if compiler.errors:
-        note += f" (errors above are non-fatal: game still builds)"
     print(f"{output_path} generated from {len(compiler.lines)} line(s){note}")
+    if compiler.errors:
+        # Ошибка генерации (например, вызов несуществующей функции) раньше
+        # только печаталась, а сборка шла дальше — строка кода тихо пропадала.
+        print(f"Compilation failed: {compiler.errors} error(s)", file=sys.stderr)
+        return 1
     if dump_c:
         print("\n" + "=" * 60)
         print("GENERATED C CODE:")

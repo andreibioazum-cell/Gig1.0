@@ -249,6 +249,53 @@ double lerp(double a, double b, double t){ return a + (b-a)*t; }
 double dist(double x1, double y1, double x2, double y2){ double dx=x2-x1, dy=y2-y1; return sqrt(dx*dx+dy*dy); }
 double str_len(const char *s){ return s ? (double)strlen(s) : 0; }
 int str_eq(const char *a, const char *b){ if(a==b) return 1; if(!a||!b) return 0; return strcmp(a,b)==0; }
+/* Регистронезависимые строковые помощники для поиска и списка админов.
+ * Приводим к нижнему регистру и латиницу, и кириллицу (UTF-8, два байта),
+ * чтобы «АДМИН» и «админ» в поиске команд совпадали. */
+static uint32_t ds_utf8_next(const unsigned char **p) {
+    const unsigned char *s = *p;
+    uint32_t cp;
+    if (s[0] < 0x80) { cp = s[0]; *p = s + (s[0] ? 1 : 0); return cp; }
+    if ((s[0] & 0xe0) == 0xc0 && (s[1] & 0xc0) == 0x80) {
+        cp = ((uint32_t)(s[0] & 0x1f) << 6) | (uint32_t)(s[1] & 0x3f); *p = s + 2; return cp;
+    }
+    if ((s[0] & 0xf0) == 0xe0 && (s[1] & 0xc0) == 0x80 && (s[2] & 0xc0) == 0x80) {
+        cp = ((uint32_t)(s[0] & 0x0f) << 12) | ((uint32_t)(s[1] & 0x3f) << 6) | (uint32_t)(s[2] & 0x3f);
+        *p = s + 3; return cp;
+    }
+    cp = s[0]; *p = s + 1; return cp;
+}
+static uint32_t ds_fold(uint32_t cp) {
+    if (cp >= 'A' && cp <= 'Z') return cp + 32;          /* латиница */
+    if (cp >= 0x0410 && cp <= 0x042F) return cp + 0x20;  /* А-Я */
+    if (cp == 0x0401) return 0x0451;                     /* Ё */
+    return cp;
+}
+int str_ieq(const char *a, const char *b){
+    const unsigned char *pa = (const unsigned char *)a, *pb = (const unsigned char *)b;
+    if (a == b) return 1;
+    if (!a || !b) return 0;
+    while (*pa && *pb) {
+        if (ds_fold(ds_utf8_next(&pa)) != ds_fold(ds_utf8_next(&pb))) return 0;
+    }
+    return *pa == 0 && *pb == 0;
+}
+int str_has(const char *hay, const char *needle){
+    const unsigned char *h = (const unsigned char *)hay;
+    if (!needle || !*needle) return 1;
+    if (!hay || !*hay) return 0;
+    while (*h) {
+        const unsigned char *a = h, *b = (const unsigned char *)needle;
+        int ok = 1;
+        while (*b) {
+            if (!*a) { ok = 0; break; }
+            if (ds_fold(ds_utf8_next(&a)) != ds_fold(ds_utf8_next(&b))) { ok = 0; break; }
+        }
+        if (ok) return 1;
+        ds_utf8_next(&h);
+    }
+    return 0;
+}
 
 #ifdef __ANDROID__
 #include <android/native_activity.h>

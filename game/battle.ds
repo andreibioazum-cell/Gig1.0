@@ -22,6 +22,19 @@ function class_punch_damage num cls
 if cls==2; return santa_damage; end
 return punch_damage
 end
+function player_freeze_factor
+// Пока игрок заморожен посохом или подарком Деда Мороза, он ходит медленнее.
+if player.freeze>0; return player.freeze_slow; end
+return 1
+end
+function freeze_player num t, num slow
+if t>player.freeze; player.freeze=t; player.freeze_slow=slow; end
+end
+function tick_player_freeze
+if player.freeze<=0; return; end
+player.freeze=player.freeze-dt
+if player.freeze<=0; player.freeze=0; player.freeze_slow=1; end
+end
 function take_damage num dmg
 // Первый уровень даёт 10% защиты; пока уровень не куплен, поглощения нет.
 num absorb=player_level*0.1
@@ -49,13 +62,14 @@ if revive_prot>0; revive_prot=revive_prot-dt; if revive_prot<0; revive_prot=0; e
 end
 function reset_battle
 // сброс игрока в центр, очистка ударов и ремоутов
-player.x=screen_w/2; player.y=screen_h/2; player.angle=0; player.hp=player.max_hp; player.size=25*player_scale; enemy.size=25*enemy_scale; enemy.state=0; enemy.state_time=0; enemy.cooldown=0; enemy.hit=0; enemy.dodge_cd=0; enemy.think=0; enemy.mvx=0; enemy.mvy=0; enemy.svx=0; enemy.svy=0; enemy.freeze=0; enemy.freeze_slow=1; finished=0; punch.active=0; punch.hit=0; punch_left=0; punch_cd=0; aim_id=-1; aim_a=0
+player.x=screen_w/2; player.y=screen_h/2; player.angle=0; player.hp=player.max_hp; player.size=25*player_scale; player.freeze=0; player.freeze_slow=1; enemy.size=25*enemy_scale; enemy.state=0; enemy.state_time=0; enemy.cooldown=0; enemy.hit=0; enemy.dodge_cd=0; enemy.think=0; enemy.mvx=0; enemy.mvy=0; enemy.svx=0; enemy.svy=0; enemy.freeze=0; enemy.freeze_slow=1; finished=0; punch.active=0; punch.hit=0; punch_left=0; punch_cd=0; aim_id=-1; aim_a=0
 azum_revived=0; revive_prot=0; cups_awarded=0; match_seen_foe=0
-gift.active=0; gift.t=0; super_cd=0; super_id=-1; boom_t=0; boom_x=0; boom_y=0
+gift.active=0; gift.t=0; gift.shot=0; gift.sx=0; gift.sy=0; super_cd=0; super_id=-1; boom_t=0; boom_x=0; boom_y=0
 joy.x=130; joy.y=screen_h-150; joy.r=70; atk_x=screen_w-140; atk_y=screen_h-150; atk2_x=screen_w-140; atk2_y=screen_h-310; drop_joy
-arr_clear remotes; arr_clear remote_punches; arr_clear candy_x; arr_clear candy_y
+arr_clear remotes; arr_clear remote_punches; arr_clear remote_gifts; arr_clear candy_x; arr_clear candy_y
 num i=0; loop i<max_players*remote_fields; arr_push remotes,0; i=i+1; end
 i=0; loop i<max_players*punch_fields; arr_push remote_punches,0; i=i+1; end
+i=0; loop i<max_players*gift_fields; arr_push remote_gifts,0; i=i+1; end
 end
 function init_game
 reset_battle; enemy.hp=enemy.max_hp; spawn_enemy; spawn_all_candies
@@ -99,7 +113,8 @@ return a+pi/2
 end
 function move_player
 // движение джойстиком: игрок разворачивается ровно туда, куда наклонён джойстик
-player.x=player.x+joy.dx*joy_speed*dt; player.y=player.y+joy.dy*joy_speed*dt
+num sp=joy_speed*player_freeze_factor()
+player.x=player.x+joy.dx*sp*dt; player.y=player.y+joy.dy*sp*dt
 num jm=sqrt(joy.dx*joy.dx+joy.dy*joy.dy); if jm>0.15; player.angle=atan2(joy.dy,joy.dx); end
 if player.x<player.size; player.x=player.size; end; if player.x>screen_w-player.size; player.x=screen_w-player.size; end; if player.y<player.size; player.y=player.size; end; if player.y>screen_h-player.size; player.y=screen_h-player.size; end
 end
@@ -328,7 +343,7 @@ enemy_engage desired
 enemy_face_motion
 end
 function update_game
-tick_revive
+tick_revive; tick_player_freeze; update_event
 update_aim; if finished!=0; return; end
 if player.hp<=0; if try_revive()==0; finish_game 2; return; end; end
 move_player
@@ -378,6 +393,9 @@ num x=net_player_x(s)*screen_w, y=net_player_y(s)*screen_h, a=net_player_angle(s
 if arr_get(remotes,b)==0
 arr_set remotes,b,1; arr_set remotes,b+1,x; arr_set remotes,b+2,y; arr_set remotes,b+3,a
 arr_set remotes,b+7,x; arr_set remotes,b+8,y; arr_set remotes,b+9,a
+// Первый кадр знакомства: запоминаем текущий счётчик подарка, чтобы
+// зашедший в комнату не поймал «фантомный» взрыв из чужого прошлого.
+clear_remote_gift s; arr_set remote_gifts,s*gift_fields+6,net_player_gift(s)
 else
 arr_set remotes,b+7,x; arr_set remotes,b+8,y; arr_set remotes,b+9,a
 end
@@ -389,9 +407,15 @@ if net_p!=prev_p
 arr_set remotes,b+6,net_p
 start_remote_punch s
 end
+num gb=s*gift_fields, net_g=net_player_gift(s), prev_g=arr_get(remote_gifts,gb+6)
+if net_g!=prev_g
+arr_set remote_gifts,gb+6,net_g
+start_remote_gift s
+end
 else
 arr_set remotes,b,0; arr_set remotes,b+5,0
 clear_remote_punch s
+clear_remote_gift s
 end
 s=s+1
 end
@@ -407,6 +431,9 @@ if arr_get(remotes,s*remote_fields+5)==0
 clear_remote_punch s
 else if in_punch_box(arr_get(remote_punches,rb+1),arr_get(remote_punches,rb+2),arr_get(remote_punches,rb+3),arr_get(remote_punches,rb+4),player.x,player.y)==1
 num rcls=arr_get(remotes,s*remote_fields+10)
+// Посох Деда Мороза и в онлайне морозит: каждый клиент вешает заморозку
+// на себя сам, поэтому эффект одинаковый у обоих игроков.
+if rcls==2; freeze_player santa_freeze,santa_freeze_slow; end
 take_damage class_punch_damage(rcls); ds_log "remote hit! hp %g",player.hp
 clear_remote_punch s
 if player.hp<=0; player.hp=0; if try_revive()==0; finish_game 2; return; end; end
@@ -453,21 +480,32 @@ end
 function push_self
 if net_slot()<0; return; end
 num alive=1; if player.hp<=0; alive=0; end
-net_push_self player.x/screen_w,player.y/screen_h,player.angle,player.hp,alive,punch.shot,punch.x/screen_w,punch.y/screen_h,punch.dx,punch.dy,player_class
+// Раньше здесь стоял вызов несуществующей функции net_push_self: компилятор
+// молча выбрасывал строку, и в комнату не уходило вообще ничего.
+net_publish player.x/screen_w,player.y/screen_h,player.angle,player.hp,alive,player.freeze
+net_publish_punch punch.x/screen_w,punch.y/screen_h,punch.dx,punch.dy,punch.shot
+net_publish_gift gift.sx/screen_w,gift.sy/screen_h,gift.dx,gift.dy,gift.shot
 end
 function update_online
-tick_revive
-update_aim; if finished!=0; return; end
+tick_revive; tick_player_freeze
+update_aim; if finished!=0; update_event; chat_update; return; end
 if player.hp<=0; if try_revive()==0; finish_game 2; return; end; end
 move_player
 if punch_left>0; punch_left=punch_left-dt; if punch_left<0; punch_left=0; end; end
 follow_punch
+if super_cd>0; super_cd=super_cd-dt; if super_cd<0; super_cd=0; end; end
+if boom_t>0; boom_t=boom_t-dt; if boom_t<0; boom_t=0; end; end
 if net_status()==NET_PLAYING
 if online_ready==0; place_online; end
 read_remotes; smooth_remotes; update_remote_punches
-check_online_finish; push_self
+check_online_finish
 end
-update_disco; chat_update
+if online_ready==1
+update_gift_online; update_remote_gifts
+if finished!=0; update_event; chat_update; return; end
+end
+if net_status()==NET_PLAYING; push_self; end
+update_event; chat_update
 end
 function fire_punch
 if punch_cd>0; return; end
@@ -477,9 +515,12 @@ ds_log "punch %g (%g,%g)",punch.shot,punch.dx,punch.dy
 end
 function fire_super
 if player_class!=2||super_cd>0; return; end
-gift.x=player.x; gift.y=player.y; gift.dx=cos(player.angle); gift.dy=sin(player.angle); gift.active=1; gift.t=0
+if game_state==5&&online_ready==0; return; end
+gift.x=player.x; gift.y=player.y; gift.sx=player.x; gift.sy=player.y
+gift.dx=cos(player.angle); gift.dy=sin(player.angle); gift.active=1; gift.t=0
+gift.shot=gift.shot+1
 super_cd=super_cd_time
-ds_log "gift thrown!"
+ds_log "gift thrown! (%g)",gift.shot
 end
 function update_gift
 if gift.active==0; return; end
@@ -496,18 +537,100 @@ enemy.hp=enemy.hp-super_damage; ds_log "gift boom! enemy hp %g",enemy.hp
 if enemy.hp<=0; finish_game 1; end
 end
 end
+function gift_hits_remote
+// В онлайне подарок взрывается о любого живого соперника. Урон и заморозку
+// соперник применяет к себе сам, поэтому здесь только момент взрыва.
+num s=0
+loop s<max_players
+num b=s*remote_fields
+if s!=net_slot()&&arr_get(remotes,b+5)==1
+if dist(gift.x,gift.y,arr_get(remotes,b+1),arr_get(remotes,b+2))<player.size*0.65+24; return 1; end
+end
+s=s+1
+end
+return 0
+end
+function update_gift_online
+if gift.active==0; return; end
+gift.t=gift.t+dt
+gift.x=gift.x+gift.dx*super_speed*dt; gift.y=gift.y+gift.dy*super_speed*dt
+num touched=gift_hits_remote()
+if gift.t>super_range/super_speed; touched=1; end
+if touched==0; return; end
+gift.active=0; boom_x=gift.x; boom_y=gift.y; boom_t=boom_time
+ds_log "gift boom online"
+end
+function clear_remote_gift num s
+num gb=s*gift_fields
+arr_set remote_gifts,gb,0; arr_set remote_gifts,gb+1,0; arr_set remote_gifts,gb+2,0
+arr_set remote_gifts,gb+3,0; arr_set remote_gifts,gb+4,0; arr_set remote_gifts,gb+5,0
+end
+function start_remote_gift num s
+// Соперник прислал новый номер броска: повторяем полёт подарка у себя от
+// точки броска и в ту же сторону — так же, как поступаем с ударом.
+num gb=s*gift_fields
+arr_set remote_gifts,gb,1
+arr_set remote_gifts,gb+1,net_player_gift_x(s)*screen_w
+arr_set remote_gifts,gb+2,net_player_gift_y(s)*screen_h
+arr_set remote_gifts,gb+3,net_player_gift_dx(s)
+arr_set remote_gifts,gb+4,net_player_gift_dy(s)
+arr_set remote_gifts,gb+5,0
+end
+function update_remote_gifts
+num s=0
+loop s<max_players
+num gb=s*gift_fields
+num bt=arr_get(remote_gifts,gb+7)
+if bt>0; bt=bt-dt; if bt<0; bt=0; end; arr_set remote_gifts,gb+7,bt; end
+if arr_get(remote_gifts,gb)==1
+num gx=arr_get(remote_gifts,gb+1)+arr_get(remote_gifts,gb+3)*super_speed*dt
+num gy=arr_get(remote_gifts,gb+2)+arr_get(remote_gifts,gb+4)*super_speed*dt
+num t=arr_get(remote_gifts,gb+5)+dt
+arr_set remote_gifts,gb+1,gx; arr_set remote_gifts,gb+2,gy; arr_set remote_gifts,gb+5,t
+num touched=0
+if dist(gx,gy,player.x,player.y)<player.size*0.65+24; touched=1; end
+if t>super_range/super_speed; touched=1; end
+if arr_get(remotes,s*remote_fields+5)==0; touched=1; end
+if touched==1
+arr_set remote_gifts,gb,0
+arr_set remote_gifts,gb+7,boom_time; arr_set remote_gifts,gb+8,gx; arr_set remote_gifts,gb+9,gy
+if finished==0&&revive_prot<=0&&dist(gx,gy,player.x,player.y)<=super_radius
+freeze_player super_freeze,super_freeze_slow
+take_damage super_damage; ds_log "remote gift boom! hp %g",player.hp
+if player.hp<=0; player.hp=0; if try_revive()==0; finish_game 2; return; end; end
+end
+end
+end
+s=s+1
+end
+end
+function draw_gift_at num x, num y
+roundrect x-13,y-13,26,26,5,0xE53935
+line x-13,y,x+13,y,4,0xFFD54A
+line x,y-13,x,y+13,4,0xFFD54A
+end
+function draw_boom_at num x, num y, num t
+if t<=0; return; end
+num p=1-t/boom_time, r=super_radius*p
+ring x,y,r,9,0xB3E5FC
+ring x,y,r*0.6,6,0xE1F5FE
+circle x,y,super_radius*0.3,0x55B3E5FC
+end
+function draw_remote_gifts
+num s=0
+loop s<max_players
+num gb=s*gift_fields
+if arr_get(remote_gifts,gb)==1; draw_gift_at arr_get(remote_gifts,gb+1),arr_get(remote_gifts,gb+2); end
+draw_boom_at arr_get(remote_gifts,gb+8),arr_get(remote_gifts,gb+9),arr_get(remote_gifts,gb+7)
+s=s+1
+end
+end
 function draw_gift
 if gift.active==0; return; end
-roundrect gift.x-13,gift.y-13,26,26,5,0xE53935
-line gift.x-13,gift.y,gift.x+13,gift.y,4,0xFFD54A
-line gift.x,gift.y-13,gift.x,gift.y+13,4,0xFFD54A
+draw_gift_at gift.x,gift.y
 end
 function draw_boom
-if boom_t<=0; return; end
-num p=1-boom_t/boom_time, r=super_radius*p
-ring boom_x,boom_y,r,9,0xB3E5FC
-ring boom_x,boom_y,r*0.6,6,0xE1F5FE
-circle boom_x,boom_y,super_radius*0.3,0x55B3E5FC
+draw_boom_at boom_x,boom_y,boom_t
 end
 function draw_candies
 num hw=25*candy_scale, i=0
@@ -516,14 +639,17 @@ tex arr_get(candy_x,i)-hw,arr_get(candy_y,i)-hw,CANDY_TEX,0,candy_scale
 i=i+1
 end
 end
+function draw_freeze_box num cx, num cy, num half
+num t=4, s=half*2
+rect cx-half,cy-half,s,s,0x551E88E5
+rect cx-half,cy-half,s,t,0xFF4FC3F7
+rect cx-half,cy+half-t,s,t,0xFF4FC3F7
+rect cx-half,cy-half,t,s,0xFF4FC3F7
+rect cx+half-t,cy-half,t,s,0xFF4FC3F7
+end
 function draw_freeze
 if enemy.freeze<=0; return; end
-num t=4, half=enemy.size+5, s=half*2
-rect enemy.x-half,enemy.y-half,s,s,0x551E88E5
-rect enemy.x-half,enemy.y-half,s,t,0xFF4FC3F7
-rect enemy.x-half,enemy.y+half-t,s,t,0xFF4FC3F7
-rect enemy.x-half,enemy.y-half,t,s,0xFF4FC3F7
-rect enemy.x+half-t,enemy.y-half,t,s,0xFF4FC3F7
+draw_freeze_box enemy.x,enemy.y,enemy.size+5
 end
 function finish_game num result
 finished=result; aim_id=-1; super_id=-1; aim_a=0; punch.active=0; punch.hit=0; punch_left=0; drop_joy
@@ -561,7 +687,7 @@ function draw_controls
 ring joy.x,joy.y,joy.r,4,0x000000; circle joy.x+joy.ox,joy.y+joy.oy,34,0x000000
 circle atk_x,atk_y,70,0xE94560; ring atk_x,atk_y,70,4,0x000000
 text_in_box tr_punch(),atk_x-70,atk_y-70,140,140,0xFFFFFF,0.55
-if player_class==2&&game_state==1
+if player_class==2&&(game_state==1||online_ready==1)
 // Суператака «Подарок»: большая фиолетовая кнопка (размер как у кнопки удара)
 circle atk2_x,atk2_y,70,0x5F10A0; ring atk2_x,atk2_y,70,4,0x000000
 str sl=tr_super()
@@ -577,6 +703,7 @@ ctext tr_tap_to_return(),y+132,0xFFCDD2
 end
 function draw_game
 draw_grass
+draw_snow
 draw_field
 draw_candies
 draw_gift; draw_boom
@@ -597,25 +724,55 @@ num b=127+127*sin(phase+4.188)
 num a=55+90*(0.5+0.5*sin(disco_t*16))
 return ((((unsigned)(int)a)<<24)|(((unsigned)(int)r)<<16)|(((unsigned)(int)g)<<8)|((unsigned)(int)b))
 end
+function hash01 num i
+// Псевдослучайное число 0..1 по номеру снежинки: одинаковое каждый кадр,
+// поэтому снег падает ровно, а не дёргается.
+num v=sin(i*127.1+11.7)*43758.5453
+return v-floor(v)
+end
+function draw_snow
+if event_mode!=2; return; end
+num i=0
+loop i<event_flakes
+num rx=hash01(i), ry=hash01(i+91), rs=hash01(i+37)
+num yy=ry*screen_h+event_t*(40+rs*90)
+yy=yy-floor(yy/screen_h)*screen_h
+num xx=rx*screen_w+sin(event_t*0.8+i)*14
+circle xx,yy,2+rs*3,0xBBFFFFFF
+i=i+1
+end
+end
 function draw_disco
-if event_mode==0||disco_safe==1; return; end
+if event_mode!=1||disco_safe==1; return; end
 num col=disco_color(disco_t*18)
 rect 0,0,screen_w,screen_h,col
 num ct=disco_t*12
 num r=110+40*sin(ct)
 ring screen_w/2,screen_h/2,r,7,0xC0FFFFFF
 end
-function update_disco
+function update_event
 event_mode=net_event()
+event_t=event_t+dt
+if event_t>100000; event_t=0; end
 if event_mode==1&&disco_safe==0; disco_t=disco_t+dt; else; disco_t=0; end
 end
 function draw_online
 draw_grass
-draw_disco
+draw_disco; draw_snow
 draw_field
+if player.freeze>0; draw_freeze_box player.x,player.y,player.size+5; end
+draw_gift; draw_boom; draw_remote_gifts
 num hw=25*cube_scale*player_scale
 str myn=net_player_nick(net_slot())
-if str_len(myn)>0; num mnw=text_ink_width(myn)*0.5; text_scaled myn,player.x-mnw/2,player.y-hw-26,0xFFFFFF,0.5; end
+if str_len(myn)>0
+num mnw=text_ink_width(myn)*0.5
+text_scaled myn,player.x-mnw/2,player.y-hw-26,0xFFFFFF,0.5
+if is_admin()==1
+str mtag="["+tr_admin()+"]"
+num mtw=text_ink_width(mtag)*0.45
+text_scaled mtag,player.x-mtw/2,player.y-hw-48,0xFFD54A,0.45
+end
+end
 num i=0
 loop i<max_players
 num b=i*remote_fields
@@ -628,7 +785,16 @@ num px=arr_get(remote_punches,rb+1), py=arr_get(remote_punches,rb+2), pdx=arr_ge
 draw_punch_box px,py,pdx,pdy,punch_reach,punch_width,1
 draw_remote_model rx,ry,atan2(pdy,pdx),rcls,1
 else; draw_remote_model rx,ry,ra,rcls,0; end
-if str_len(rn)>0; num rnw=text_ink_width(rn)*0.5; text_scaled rn,rx-rnw/2,ry-hw-26,0xFFFFFF,0.5; end
+if net_player_freeze(slot)>0; draw_freeze_box rx,ry,player.size+5; end
+if str_len(rn)>0
+num rnw=text_ink_width(rn)*0.5
+text_scaled rn,rx-rnw/2,ry-hw-26,0xFFFFFF,0.5
+if is_admin_nick(rn)==1
+str rtag="["+tr_admin()+"]"
+num rtw=text_ink_width(rtag)*0.45
+text_scaled rtag,rx-rtw/2,ry-hw-48,0xFFD54A,0.45
+end
+end
 end
 i=i+1
 end
@@ -652,7 +818,7 @@ if action==3; aim_id=-1; super_id=-1; drop_joy; return; end
 if game_state==5&&touch_chat(x,y,action)==1; return; end
 if back_hit(x,y)==1&&action!=2; start_transition 0; return; end
 if chat_open==1; return; end
-if player_class==2&&game_state==1
+if player_class==2&&(game_state==1||online_ready==1)
 if action==0&&sqrt((x-atk2_x)*(x-atk2_x)+(y-atk2_y)*(y-atk2_y))<=96; super_id=id; return; end
 if action==1&&id==super_id; super_id=-1; fire_super; return; end
 end

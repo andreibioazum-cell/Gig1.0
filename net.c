@@ -69,6 +69,8 @@ typedef struct {
     double x,y,a,hp,alive;
     double punch_x,punch_y,punch_dx,punch_dy,punch;
     double cls;
+    double frz;                                   /* сколько секунд игрок ещё заморожен */
+    double gift,gift_x,gift_y,gift_dx,gift_dy;    /* суператака «Подарок» */
     int online;
     char nick[24];
 } Actor;
@@ -919,6 +921,28 @@ static void http_post_async(const char *url, const char *body) {
     if (t) { ds_thread_detach(t); return; }
     free(j);
 }
+static void *http_put_job(void *arg) {
+    HttpJob *j = (HttpJob*)arg;
+    if (j) { http("PUT", j->url, j->body, NULL, 0); free(j); }
+    return NULL;
+}
+#ifdef _WIN32
+static unsigned __stdcall win_http_put(void *arg) { http_put_job(arg); return 0; }
+#endif
+static void http_put_async(const char *url, const char *body) {
+    HttpJob *j = (HttpJob*)malloc(sizeof(*j));
+    DSThread t;
+    if (!j) return;
+    snprintf(j->url, sizeof(j->url), "%s", url);
+    snprintf(j->body, sizeof(j->body), "%s", body);
+#ifdef _WIN32
+    t = ds_thread_start(win_http_put, j);
+#else
+    t = ds_thread_start(http_put_job, j);
+#endif
+    if (t) { ds_thread_detach(t); return; }
+    free(j);
+}
 static void *http_delete_job(void *arg) {
     char *url = (char*)arg;
     if (url) { http("DELETE", url, NULL, NULL, 0); free(url); }
@@ -949,9 +973,10 @@ static int push_state(void) {
     if(slot<0) return 0;
     json_escape(a.nick,enick,sizeof(enick));
     snprintf(url,sizeof(url),"%s/rooms/%s/players/%d.json",net.base,net.room,slot);
-    snprintf(body,sizeof(body),"{\"uid\":\"%s\",\"nick\":\"%s\",\"x\":%.5f,\"y\":%.5f,\"angle\":%.5f,\"hp\":%.0f,\"alive\":%.0f,\"seq\":%lu,\"px\":%.5f,\"py\":%.5f,\"pdx\":%.5f,\"pdy\":%.5f,\"punch\":%.0f,\"cls\":%.0f}",
+    snprintf(body,sizeof(body),"{\"uid\":\"%s\",\"nick\":\"%s\",\"x\":%.5f,\"y\":%.5f,\"angle\":%.5f,\"hp\":%.0f,\"alive\":%.0f,\"seq\":%lu,\"px\":%.5f,\"py\":%.5f,\"pdx\":%.5f,\"pdy\":%.5f,\"punch\":%.0f,\"cls\":%.0f,\"frz\":%.2f,\"gift\":%.0f,\"gx\":%.5f,\"gy\":%.5f,\"gdx\":%.5f,\"gdy\":%.5f}",
         net.uid,enick,safe(a.x),safe(a.y),safe(a.a),safe(a.hp),safe(a.alive),seq,
-        safe(a.punch_x),safe(a.punch_y),safe(a.punch_dx),safe(a.punch_dy),safe(a.punch),safe(a.cls));
+        safe(a.punch_x),safe(a.punch_y),safe(a.punch_dx),safe(a.punch_dy),safe(a.punch),safe(a.cls),
+        safe(a.frz),safe(a.gift),safe(a.gift_x),safe(a.gift_y),safe(a.gift_dx),safe(a.gift_dy));
     int c = http("PUT",url,body,NULL,0);
     if (c != 200 && net_log_ok()) LOGERR("push state: HTTP %d (room write denied? check Firebase rules)", c);
     return c == 200;
@@ -997,7 +1022,7 @@ static int claim_slot(void) {
         {
             char enick[64];
             json_escape(net.me.nick,enick,sizeof(enick));
-            snprintf(body,sizeof(body),"{\"uid\":\"%s\",\"nick\":\"%s\",\"x\":0,\"y\":0,\"angle\":0,\"hp\":0,\"alive\":0,\"seq\":0,\"px\":0,\"py\":0,\"pdx\":0,\"pdy\":0,\"punch\":0,\"cls\":%.0f}",net.uid,enick,safe(net.me.cls));
+            snprintf(body,sizeof(body),"{\"uid\":\"%s\",\"nick\":\"%s\",\"x\":0,\"y\":0,\"angle\":0,\"hp\":0,\"alive\":0,\"seq\":0,\"px\":0,\"py\":0,\"pdx\":0,\"pdy\":0,\"punch\":0,\"cls\":%.0f,\"frz\":0,\"gift\":0,\"gx\":0,\"gy\":0,\"gdx\":0,\"gdy\":0}",net.uid,enick,safe(net.me.cls));
         }
         code=http_ex("PUT",url,body,NULL,0, etag[0] ? "if-match" : NULL, etag[0] ? etag : NULL, NULL, 0);
         if(code==200) { seen_uid[slot][0]=0; seen_seq[slot]=0; seen_at[slot]=0; LOG("slot %d uid %s",slot,net.uid); return slot; }
@@ -1030,6 +1055,12 @@ static void read_players(const char *resp) {
         snprintf(p,sizeof(p),"%s/pdy",bp); ps[slot].punch_dy=num(resp,p,0);
         snprintf(p,sizeof(p),"%s/punch",bp); ps[slot].punch=num(resp,p,0);
         snprintf(p,sizeof(p),"%s/cls",bp); ps[slot].cls=num(resp,p,0);
+        snprintf(p,sizeof(p),"%s/frz",bp); ps[slot].frz=num(resp,p,0);
+        snprintf(p,sizeof(p),"%s/gift",bp); ps[slot].gift=num(resp,p,0);
+        snprintf(p,sizeof(p),"%s/gx",bp); ps[slot].gift_x=num(resp,p,0);
+        snprintf(p,sizeof(p),"%s/gy",bp); ps[slot].gift_y=num(resp,p,0);
+        snprintf(p,sizeof(p),"%s/gdx",bp); ps[slot].gift_dx=num(resp,p,0);
+        snprintf(p,sizeof(p),"%s/gdy",bp); ps[slot].gift_dy=num(resp,p,0);
         ps[slot].online=1; count++;
     }
     lock(); memcpy(net.players,ps,sizeof(ps)); net.count=count; unlock();
@@ -1164,8 +1195,14 @@ static void *reader_thread(void *arg) {
             next_chat=now_ms()+CHAT_TICK;
         }
         if(start>=next_event) {
-            if(pull_event(event_resp,sizeof(event_resp)))
-                lock(); net.event = num(event_resp,"",0)!=0 ? 1 : 0; unlock();
+            /* Раньше здесь не было скобок: lock() выполнялся по условию, а
+             * присваивание и unlock() — всегда, поэтому номер ивента мог
+             * прийти из старого буфера, а мьютекс отпускался незанятым. */
+            if(pull_event(event_resp,sizeof(event_resp))) {
+                int ev=(int)num(event_resp,"",0);
+                if(ev<0) ev=0;
+                lock(); net.event=ev; unlock();
+            }
             next_event=now_ms()+EVENT_TICK;
         }
         long long spent=now_ms()-start; if(spent<READ_TICK)sleep_ms((int)(READ_TICK-spent));
@@ -1219,9 +1256,9 @@ void net_disconnect(void) {
     net.started=0; net.slot=-1; status(NET_OFFLINE);
     net_fast = 0;
 }
-void net_publish(double x, double y, double angle, double hp, double alive) {
+void net_publish(double x, double y, double angle, double hp, double alive, double freeze) {
     lock();
-    net.me.x=x; net.me.y=y; net.me.a=angle; net.me.hp=hp; net.me.alive=alive;
+    net.me.x=x; net.me.y=y; net.me.a=angle; net.me.hp=hp; net.me.alive=alive; net.me.frz=freeze;
     if(net.slot>=0){ net.players[net.slot]=net.me; net.players[net.slot].online=1; }
     unlock();
 }
@@ -1231,6 +1268,55 @@ void net_publish_punch(double x, double y, double dx, double dy, double punch) {
     net.me.punch_dx=dx; net.me.punch_dy=dy; net.me.punch=punch;
     if(net.slot>=0){ net.players[net.slot]=net.me; net.players[net.slot].online=1; }
     unlock();
+}
+void net_publish_gift(double x, double y, double dx, double dy, double gift) {
+    lock();
+    net.me.gift_x=x; net.me.gift_y=y;
+    net.me.gift_dx=dx; net.me.gift_dy=dy; net.me.gift=gift;
+    if(net.slot>=0){ net.players[net.slot]=net.me; net.players[net.slot].online=1; }
+    unlock();
+}
+/* Ивенты: номер лежит в корневом узле /event и виден всем клиентам сразу.
+ * 0 — ивента нет, 1 — «диско», 2 — снегопад. Запускает их админ из панели. */
+static void *event_fetch_job(void *arg) {
+    char *base=(char*)arg, url[URL], resp[RESP];
+    snprintf(url,sizeof(url),"%s/event.json",base);
+    free(base);
+    if (http("GET",url,NULL,resp,sizeof(resp))==200) {
+        int v=(int)num(resp,"",0);
+        if (v<0) v=0;
+        lock(); net.event=v; unlock();
+    }
+    return NULL;
+}
+#ifdef _WIN32
+static unsigned __stdcall win_event_fetch(void *arg) { event_fetch_job(arg); return 0; }
+#endif
+void net_event_fetch(const char *url) {
+    const char *base=(url&&*url)?url:net.base;
+    char *arg; DSThread t;
+    if(!base||!*base) return;
+    arg=(char*)malloc(URL);
+    if(!arg) return;
+    snprintf(arg,URL,"%s",base);
+#ifdef _WIN32
+    t = ds_thread_start(win_event_fetch, arg);
+#else
+    t = ds_thread_start(event_fetch_job, arg);
+#endif
+    if (t) ds_thread_detach(t); else free(arg);
+}
+void net_event_set(const char *url, double value) {
+    const char *base=(url&&*url)?url:net.base;
+    char full[URL], body[32];
+    int v=(int)value;
+    if(v<0) v=0;
+    lock(); net.event=v; unlock();
+    if(!base||!*base) return;
+    snprintf(full,sizeof(full),"%s/event.json",base);
+    snprintf(body,sizeof(body),"%d",v);
+    http_put_async(full, body);
+    LOG("event set to %d",v);
 }
 void net_chat_send(const char *text){
     if(!net.started || !text || !*text) return;
@@ -1324,4 +1410,10 @@ READER(net_player_punch_dx, net.players[i].punch_dx)
 READER(net_player_punch_dy, net.players[i].punch_dy)
 READER(net_player_punch, net.players[i].punch)
 READER(net_player_class, net.players[i].cls)
+READER(net_player_freeze, net.players[i].frz)
+READER(net_player_gift, net.players[i].gift)
+READER(net_player_gift_x, net.players[i].gift_x)
+READER(net_player_gift_y, net.players[i].gift_y)
+READER(net_player_gift_dx, net.players[i].gift_dx)
+READER(net_player_gift_dy, net.players[i].gift_dy)
 #undef READER

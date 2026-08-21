@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <math.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <netinet/in.h>
@@ -27,10 +28,13 @@
 /* globals generated into game.c (non-static) — read them for debugging */
 extern double game_state, chat_open, login_field, login_status, t_dir;
 extern double player_class, azum_revived, finished, cups, candies, azum_owned, santa_owned, cups_awarded, player_level, levels_unlocked, candy_count;
+extern double online_ready, admin_min, admin_cmd_count, event_mode, language;
+extern const char *admin_search;
+extern void *gift;
 extern DSArray *candy_x, *candy_y;
 extern const char *login_nick, *login_pass, *chat_input;
 extern void *player, *enemy, *punch;
-extern DSArray *remotes, *remote_punches;
+extern DSArray *remotes, *remote_punches, *remote_gifts;
 extern double enemy_cooldown_min, enemy_cooldown_max;
 /* Поля Enemy идут в объявленном в entities.ds порядке: x,y,size,hp,max_hp,
  * angle,state,state_time,cooldown,... — читаем их как массив double. */
@@ -39,6 +43,14 @@ extern double enemy_cooldown_min, enemy_cooldown_max;
 #define ENEMY_COOLDOWN 8
 #define ENEMY_FREEZE 23
 #define ENEMY_FREEZE_SLOW 24
+/* Player: x,y,size,angle,hp,max_hp,freeze,freeze_slow */
+#define PLAYER_X 0
+#define PLAYER_Y 1
+#define PLAYER_HP 4
+#define PLAYER_FREEZE 6
+/* Gift: x,y,dx,dy,active,t,shot,sx,sy */
+#define GIFT_ACTIVE 4
+#define GIFT_SHOT 6
 
 static uint32_t *g_pixels = NULL;
 static int g_w = 1280, g_h = 720;
@@ -137,6 +149,25 @@ static void do_tap(float x, float y) {
     ds_call_protected(protected_touch, &c, "touch");
     c.action = 1;
     ds_call_protected(protected_touch, &c, "touch");
+}
+
+/* Снимки кадра для глазами-проверки верстки: DS_SHOTS=1 ./test/game_test */
+static void dump_frame(const char *name) {
+    char path[256];
+    FILE *f;
+    if (!getenv("DS_SHOTS")) return;
+    snprintf(path, sizeof(path), "test/shots/%s.ppm", name);
+    f = fopen(path, "wb");
+    if (!f) return;
+    fprintf(f, "P6\n%d %d\n255\n", g_w, g_h);
+    for (int i = 0; i < g_w * g_h; i++) {
+        uint32_t p = g_pixels[i];
+        /* Буфер кадра лежит как RGBA_8888 (R в младшем байте), см. graphics.c. */
+        unsigned char rgb[3] = { (unsigned char)(p & 255), (unsigned char)((p >> 8) & 255), (unsigned char)((p >> 16) & 255) };
+        fwrite(rgb, 1, 3, f);
+    }
+    fclose(f);
+    printf("=== shot %s\n", path);
 }
 
 static long g_frame = 0;
@@ -240,6 +271,41 @@ static void tap_levels_btn(void) { do_tap((float)(g_w / 2), 470.0f); }
 static void tap_level_row(int n) {
     float y = 32.0f + 64.0f + 52.0f + (float)(n - 1) * 88.0f + 39.0f;
     do_tap((float)(g_w / 2), y);
+}
+
+/* Соперник в слоте 1 фейкового сервера: пишем целиком то, что пишет игра. */
+static unsigned long g_rseq = 5000;
+static void put_remote(double x, double y, int cls, int punch,
+                       double px, double py, double pdx, double pdy,
+                       int gift_n, double gx, double gy, double gdx, double gdy) {
+    char url[192], body[640];
+    snprintf(url, sizeof(url), "http://127.0.0.1:%d/rooms/main/players/1.json", TEST_PORT);
+    snprintf(body, sizeof(body),
+             "{\"uid\":\"00000000000000bb\",\"nick\":\"Freezer\",\"x\":%.5f,\"y\":%.5f,\"angle\":0,"
+             "\"hp\":10,\"alive\":1,\"seq\":%lu,\"px\":%.5f,\"py\":%.5f,\"pdx\":%.5f,\"pdy\":%.5f,"
+             "\"punch\":%d,\"cls\":%d,\"frz\":0,\"gift\":%d,\"gx\":%.5f,\"gy\":%.5f,\"gdx\":%.5f,\"gdy\":%.5f}",
+             x, y, ++g_rseq, px, py, pdx, pdy, punch, cls, gift_n, gx, gy, gdx, gdy);
+    test_http_impl("PUT", url, body, NULL, 0, NULL, NULL, NULL, 0);
+}
+/* Прогон кадров с поддержанием соперника «живым» (иначе слот протухнет). */
+static void run_with_remote(int frames, int cls, int punch, double px, double py,
+                            int gift_n, double gx, double gy, double gdx, double gdy) {
+    for (int i = 0; i < frames; i++) {
+        if (i % 3 == 0) put_remote(0.5, 0.2, cls, punch, px, py, 1, 0, gift_n, gx, gy, gdx, gdy);
+        run_frames(1);
+    }
+}
+static int get_own_slot_json(char *out, size_t cap) {
+    char url[192];
+    snprintf(url, sizeof(url), "http://127.0.0.1:%d/rooms/main/players/%d.json", TEST_PORT, (int)net_slot());
+    return test_http_impl("GET", url, NULL, out, cap, NULL, NULL, NULL, 0);
+}
+static double json_num(const char *json, const char *key) {
+    char pat[32];
+    snprintf(pat, sizeof(pat), "\"%s\":", key);
+    const char *p = strstr(json ? json : "", pat);
+    if (!p) return -12345;
+    return atof(p + strlen(pat));
 }
 
 int main(void) {
@@ -498,6 +564,10 @@ int main(void) {
         return 3;
     }
     printf("=== classes tab: Azum bought and selected (frame %ld)\n", g_frame);
+    dump_frame("shop_en");
+    language = 1; run_frames(3); dump_frame("shop_ru");
+    language = 2; run_frames(3); dump_frame("shop_ja");
+    language = 0; run_frames(3);
     tap_back(); wait_state(0, 30);
 
     /* --- 12. Повторный вход в онлайн с сохранённым аккаунтом --- */
@@ -507,6 +577,144 @@ int main(void) {
     if (!wait_slot(80)) { printf("!! online re-entry failed\n"); return 3; }
     printf("=== online straight in with saved account: slot=%g (frame %ld)\n", net_slot(), g_frame);
     tap_back(); wait_state(0, 60);
+
+    /* --- 13. Онлайн Деда Мороза: своё состояние уходит в комнату,
+     *         посох морозит, подарок взрывается и тоже морозит.        --- */
+    santa_owned = 1; player_class = 2; player_level = 0; levels_unlocked = 0;
+    tap_play(); wait_state(2, 30);
+    tap_online();
+    if (!wait_state(5, 30)) { printf("!! did not enter online as Santa, state=%g\n", game_state); return 3; }
+    if (!wait_slot(80)) { printf("!! Santa online entry failed\n"); return 3; }
+    run_with_remote(60, 2, 0, 0.5, 0.2, 0, 0, 0, 1, 0);
+    if (online_ready != 1) { printf("!! online battle did not start (online_ready=%g)\n", online_ready); return 3; }
+
+    {
+        double *pl = (double *)player;
+        char resp[2048];
+        double sx, sy, cls;
+        if (get_own_slot_json(resp, sizeof(resp)) != 200) { printf("!! cannot read own slot from the room\n"); return 3; }
+        sx = json_num(resp, "x"); sy = json_num(resp, "y"); cls = json_num(resp, "cls");
+        if (sx <= 0.01 || sy <= 0.01) {
+            printf("!! own position is not published: x=%g y=%g (raw %s)\n", sx, sy, resp);
+            return 3;
+        }
+        if (fabs(sx * (double)g_w - pl[PLAYER_X]) > 4.0 || fabs(sy * (double)g_h - pl[PLAYER_Y]) > 4.0) {
+            printf("!! published position does not match the player: %g,%g vs %g,%g\n",
+                   sx * g_w, sy * g_h, pl[PLAYER_X], pl[PLAYER_Y]);
+            return 3;
+        }
+        if (cls != 2) { printf("!! Santa class is not published: cls=%g\n", cls); return 3; }
+        printf("=== own state published to the room: x=%.3f y=%.3f cls=%g\n", sx, sy, cls);
+    }
+
+    /* Посох соперника-Деда Мороза: 2 урона и заморозка. */
+    {
+        double *pl = (double *)player;
+        double hp0 = pl[PLAYER_HP];
+        double px = pl[PLAYER_X] / (double)g_w, py = pl[PLAYER_Y] / (double)g_h;
+        int hit = 0;
+        for (int i = 0; i < 200 && !hit; i++) {
+            put_remote(0.5, 0.2, 2, 7, px, py, 1, 0, 0, 0, 0, 1, 0);
+            run_frames(1);
+            if (pl[PLAYER_HP] < hp0) hit = 1;
+        }
+        if (!hit) { printf("!! remote Santa punch did no damage (hp=%g)\n", pl[PLAYER_HP]); return 3; }
+        if (hp0 - pl[PLAYER_HP] != 2) { printf("!! Santa staff damage is %g, expected 2\n", hp0 - pl[PLAYER_HP]); return 3; }
+        if (pl[PLAYER_FREEZE] <= 0) { printf("!! remote Santa punch did not freeze the player\n"); return 3; }
+        printf("=== online: Santa staff hits for 2 and freezes for %.2fs\n", pl[PLAYER_FREEZE]);
+    }
+
+    /* Подарок соперника: 3 урона и долгая заморозка. */
+    {
+        double *pl = (double *)player;
+        double hp0 = pl[PLAYER_HP];
+        double px = pl[PLAYER_X] / (double)g_w, py = pl[PLAYER_Y] / (double)g_h;
+        int hit = 0;
+        for (int i = 0; i < 200 && !hit; i++) {
+            put_remote(0.5, 0.2, 2, 7, px, py, 1, 0, 4, px, py, 1, 0);
+            run_frames(1);
+            if (pl[PLAYER_HP] < hp0) hit = 1;
+        }
+        if (!hit) { printf("!! remote gift did no damage (hp=%g)\n", pl[PLAYER_HP]); return 3; }
+        if (hp0 - pl[PLAYER_HP] != 3) { printf("!! gift damage is %g, expected 3\n", hp0 - pl[PLAYER_HP]); return 3; }
+        if (pl[PLAYER_FREEZE] < 2.0) { printf("!! gift did not freeze the player (%g)\n", pl[PLAYER_FREEZE]); return 3; }
+        printf("=== online: remote gift explodes for 3 and freezes for %.2fs\n", pl[PLAYER_FREEZE]);
+    }
+
+    /* Своя суператака: кнопка есть в онлайне, бросок уходит в комнату. */
+    {
+        double *g = (double *)gift;
+        char resp[2048];
+        do_tap((float)(g_w - 140), (float)(g_h - 310));
+        run_with_remote(20, 2, 7, 0.5, 0.2, 4, 0.5, 0.2, 1, 0);
+        if (g[GIFT_SHOT] < 1) { printf("!! the gift button did nothing in online\n"); return 3; }
+        if (get_own_slot_json(resp, sizeof(resp)) != 200) { printf("!! cannot read own slot after the gift\n"); return 3; }
+        if (json_num(resp, "gift") < 1) { printf("!! the gift throw was not published: %s\n", resp); return 3; }
+        printf("=== online: own gift thrown (shot=%g) and published\n", g[GIFT_SHOT]);
+        dump_frame("online_santa");
+    }
+    tap_back(); wait_state(0, 60);
+
+    /* --- 14. Админка: статус, панель команд, запуск ивентов --- */
+    {
+        char url[192];
+        snprintf(url, sizeof(url), "http://127.0.0.1:%d", TEST_PORT);
+        if (net_auth(url, "Dimasi4ek229", "adminpass") != (double)NET_LOGIN_OK) {
+            printf("!! cannot log in as the admin account\n");
+            return 3;
+        }
+    }
+    run_frames(10);
+    dump_frame("lobby_admin");
+    /* Кнопка «Админ» — пятая в лобби (my+320). */
+    do_tap((float)(g_w / 2), (float)(g_h / 2 - 120 + 320 + 32));
+    if (!wait_state(11, 40)) { printf("!! admin panel did not open for the admin nick, state=%g\n", game_state); return 3; }
+    printf("=== admin panel opened for 'Dimasi4ek229' (frame %ld)\n", g_frame);
+    dump_frame("admin_panel");
+
+    /* Первая строка списка — ивент «Диско». */
+    do_tap((float)(g_w / 2), 320.0f);
+    run_frames(10);
+    if (net_event() != 1) { printf("!! disco event was not started: net_event=%g\n", net_event()); return 3; }
+    printf("=== admin started the disco event (net_event=%g)\n", net_event());
+
+    /* Поиск фильтрует список: «СНЕГ» оставляет только снегопад (русский язык). */
+    language = 1;
+    run_frames(2);
+    do_tap((float)(g_w / 2), 194.0f);
+    run_frames(5);
+    if (!keyboard_visible()) { printf("!! tapping the search field did not open the keyboard\n"); return 3; }
+    keyboard_clear();
+    feed_text("СНЕГ");
+    run_frames(5);
+    if (!admin_search || strcmp(admin_search, "СНЕГ") != 0) {
+        printf("!! search text not picked up: '%s'\n", admin_search ? admin_search : "(null)");
+        return 3;
+    }
+    dump_frame("admin_search");
+    do_tap((float)(g_w / 2), 320.0f);
+    run_frames(10);
+    if (net_event() != 2) { printf("!! filtered row did not start the snow event: net_event=%g\n", net_event()); return 3; }
+    printf("=== case-insensitive search left the snowfall command and started it\n");
+    language = 0;
+    run_frames(2);
+
+    /* Кнопка «×» закрывает панель. */
+    do_tap((float)((g_w + 620) / 2 - 36), (float)(32 + 64 + 12 + 26));
+    if (!wait_state(0, 40)) { printf("!! admin panel close button did not work, state=%g\n", game_state); return 3; }
+    printf("=== admin panel closed (frame %ld)\n", g_frame);
+
+    /* Обычный аккаунт админку не получает. */
+    {
+        char url[192];
+        snprintf(url, sizeof(url), "http://127.0.0.1:%d", TEST_PORT);
+        if (net_auth(url, nick, pass) != (double)NET_LOGIN_OK) { printf("!! cannot switch back to the plain account\n"); return 3; }
+    }
+    run_frames(10);
+    do_tap((float)(g_w / 2), (float)(g_h / 2 - 120 + 320 + 32));
+    run_frames(20);
+    if (game_state == 11) { printf("!! a plain account opened the admin panel\n"); return 3; }
+    printf("=== plain account has no admin panel\n");
 
     script_active = 1;
     ds_call_protected(protected_reset, NULL, "reset");

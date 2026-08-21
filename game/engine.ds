@@ -1,7 +1,7 @@
 function start_transition num t
 if t_dir!=0; return; end; t_target=t; t_dir=1;end
 function update_transition
-if t_dir==1; t_fade=t_fade+dt/transition_duration; if t_fade>=1; t_fade=1; t_dir=2; end;else if t_dir==2; if game_state==7&&t_target!=7; keyboard_hide; end; if game_state==5&&t_target!=5; chat_open=0; keyboard_hide; net_disconnect; end; game_state=t_target; if t_target==1; init_game; else if t_target==5; init_online; else if t_target==6; console_scroll=0; else if t_target==7; login_open; end; t_dir=-1
+if t_dir==1; t_fade=t_fade+dt/transition_duration; if t_fade>=1; t_fade=1; t_dir=2; end;else if t_dir==2; if game_state==7&&t_target!=7; keyboard_hide; end; if game_state==5&&t_target!=5; chat_open=0; keyboard_hide; net_disconnect; end; if game_state==11&&t_target!=11; keyboard_hide; keyboard_clear; end; game_state=t_target; if t_target==1; init_game; else if t_target==5; init_online; else if t_target==6; console_scroll=0; else if t_target==7; login_open; else if t_target==11; admin_open; end; t_dir=-1
 else if t_dir==-1; t_fade=t_fade-dt/transition_duration; if t_fade<=0; t_fade=0; t_dir=0; end; end;end
 function init
 ds_log "init: loading textures";png_load GRASS; png_load ORDINARY_TEX; png_load PUNCH_TEX; png_load AZUM_TEX; png_load AZUM_PUNCH_TEX; png_load SANTA_TEX; png_load SANTA_PUNCH_TEX; png_load CANDY_TEX;net_autologin FIREBASE
@@ -14,9 +14,9 @@ if santa_owned==0&&player_class==2; player_class=0; end
 net_set_class player_class
 ds_log "init: ready";end
 function update
-update_transition; if game_state==1; update_game; else if game_state==5; update_online; else if game_state==7; update_login; end;end
+update_transition; if game_state==1; update_game; else if game_state==5; update_online; else if game_state==7; update_login; else if game_state==11; update_admin; end;end
 function draw
-if game_state==0; draw_lobby; else if game_state==1; draw_game; else if game_state==2; draw_modes; else if game_state==4; draw_settings; else if game_state==7; draw_login; else if game_state==8; draw_classes; else if game_state==9; draw_levels; else if game_state==10; draw_leaderboard; else; draw_online; end;if t_fade>0; rect 0,0,screen_w,screen_h,(1+floor(t_fade*254))*0x1000000; end
+if game_state==0; draw_lobby; else if game_state==1; draw_game; else if game_state==2; draw_modes; else if game_state==4; draw_settings; else if game_state==7; draw_login; else if game_state==8; draw_classes; else if game_state==9; draw_levels; else if game_state==10; draw_leaderboard; else if game_state==11; draw_admin; else; draw_online; end;if t_fade>0; rect 0,0,screen_w,screen_h,(1+floor(t_fade*254))*0x1000000; end
 end
 function touch num x, num y, num action, num id
 if t_dir!=0; return; end; if game_state==0; touch_lobby x,y,action; else if game_state==1||game_state==5; touch_game x,y,action,id; else; touch_menu x,y,action; end;end

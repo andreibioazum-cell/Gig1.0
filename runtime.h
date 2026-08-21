@@ -69,6 +69,8 @@ double lerp(double a, double b, double t);
 double dist(double x1, double y1, double x2, double y2);
 double str_len(const char *s);
 int str_eq(const char *a, const char *b);
+int str_ieq(const char *a, const char *b);
+int str_has(const char *hay, const char *needle);
 void ds_set_activity(void *activity);
 void keyboard_show(void);
 void keyboard_hide(void);

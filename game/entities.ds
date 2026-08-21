@@ -1,7 +1,9 @@
 // entities — игровые объекты
 // Punch — событие удара: точка, направление и счётчик выстрела для сети
 object Player
-num x=0, y=0, size=30, angle=0, hp=10, max_hp=10
+// freeze — сколько секунд игрок ещё заморожен ледяным посохом или подарком
+// Деда Мороза, freeze_slow — доля обычной скорости на это время.
+num x=0, y=0, size=30, angle=0, hp=10, max_hp=10, freeze=0, freeze_slow=1
 end
 object Enemy
 // state: 0 = сближение/стрейф, 1 = замах, 2 = удар, 3 = отход, 4 = уклонение
@@ -25,7 +27,9 @@ end
 object Gift
 // Суператака Деда Мороза: подарок летит по направлению взгляда и взрывается.
 // active — в полёте, t — сколько уже летит (для ограничения дальности).
-num x=0, y=0, dx=0, dy=0, active=0, t=0
+// shot — растущий номер броска и точка старта (sx,sy): по ним соперники в
+// онлайне повторяют полёт подарка у себя, как и обычный удар по счётчику.
+num x=0, y=0, dx=0, dy=0, active=0, t=0, shot=0, sx=0, sy=0
 end
 Player player=new Player()
 Enemy enemy=new Enemy()
@@ -36,6 +40,6 @@ Gift gift=new Gift()
 num aim_tx=0, aim_ty=0
 num finished=0, atk_x=0, atk_y=0, atk2_x=0, atk2_y=0, joy_id=-1, aim_id=-1, super_id=-1, punch_left=0, punch_cd=0, aim_a=0
 num super_cd=0, boom_t=0, boom_x=0, boom_y=0
-arr remotes=arr_new(), remote_punches=arr_new()
+arr remotes=arr_new(), remote_punches=arr_new(), remote_gifts=arr_new()
 // Леденцы-пикапы на карте: по паре координат (x,y) на каждый из candy_count.
 arr candy_x=arr_new(), candy_y=arr_new()

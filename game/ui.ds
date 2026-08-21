@@ -23,10 +23,17 @@ function text_in_field str label, num x, num y, num h, col color, num scale
 num th=text_ink_height(label)*scale, tt=text_ink_top(label)*scale
 text_scaled label,x,y+(h-th)/2-tt+1.5,color,scale
 end
+function text_fit_scale str label, num w, num scale
+// Подгоняем масштаб текста под ширину: длинная подпись («Купить за 100
+// леденцов») больше не вылезает за края кнопки.
+num tw=text_ink_width(label)*scale
+if tw<=w||tw<=0; return scale; end
+return w*scale/tw
+end
 function button str label, num x, num y, num w, num h
-roundrect x,y,w,h,20,0x5F10A0; text_in_box label,x,y,w,h,0xFFFFFF,1
+roundrect x,y,w,h,20,0x5F10A0; text_in_box label,x,y,w,h,0xFFFFFF,text_fit_scale(label,w-28,1)
 end
 function button_scaled str label, num x, num y, num w, num h, num scale
 // Та же кнопка, но текст меньше — для длинных подписей, чтобы не вылезали за рамки.
-roundrect x,y,w,h,20,0x5F10A0; text_in_box label,x,y,w,h,0xFFFFFF,scale
+roundrect x,y,w,h,20,0x5F10A0; text_in_box label,x,y,w,h,0xFFFFFF,text_fit_scale(label,w-24,scale)
 end

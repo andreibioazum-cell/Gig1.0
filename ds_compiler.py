@@ -3,17 +3,18 @@ TYPES={'num':'double','str':'const char*','col':'uint32_t','arr':'DSArray*'}
 BUILTINS=frozenset({
     'rect','roundrect','circle','ring','line','tex','text','text_scaled','text_ink_width','text_ink_height','text_ink_top','png_load',
     'sqrt','sin','cos','atan2','floor','rand',
-    'net_connect','net_disconnect','net_publish','net_publish_punch','net_set_class','net_status','net_slot',
+    'net_connect','net_disconnect','net_publish','net_publish_punch','net_publish_gift','net_set_class','net_status','net_slot',
     'net_player_online','net_player_x','net_player_y','net_player_angle','net_player_hp','net_player_alive','net_player_nick',
     'net_player_punch_x','net_player_punch_y','net_player_punch_dx','net_player_punch_dy','net_player_punch',
-    'net_player_class',
-    'net_event',
+    'net_player_class','net_player_freeze',
+    'net_player_gift','net_player_gift_x','net_player_gift_y','net_player_gift_dx','net_player_gift_dy',
+    'net_event','net_event_fetch','net_event_set',
     'net_chat_send','net_chat_trim','net_chat_count','net_chat_text','net_chat_uid',
     'net_autologin','net_set_nick','net_login_status','net_login_nick','net_auth','net_logout',
     'net_leaderboard_fetch','net_leaderboard_status','net_leaderboard_count','net_leaderboard_nick','net_leaderboard_cups',
     'net_load_cups','net_load_candies','net_load_class','net_load_azum','net_load_santa','net_load_level','net_load_levels_unlocked','net_save_progress',
     'keyboard_show','keyboard_hide','keyboard_get_text','keyboard_get_raw','keyboard_clear','keyboard_enter_pressed','keyboard_type','keyboard_visible',
-    'str_len','str_eq',
+    'str_len','str_eq','str_ieq','str_has',
     'ds_log','console_count','console_line','console_type','console_clear',
     'arr_new','arr_push','arr_get','arr_set','arr_len','arr_clear',
     'clamp','lerp','dist'
@@ -273,10 +274,16 @@ class DimScriptCompiler:
         if not m: return
         name,rest=m.group(1),m.group(2) or ''; args=split_top(rest,',') if rest else []
         if name in self.functions:
-            if len(args)!=len(self.functions[name][0]): return
+            if len(args)!=len(self.functions[name][0]):
+                self._error(f"call '{name}': {len(args)} argument(s), expected {len(self.functions[name][0])}")
+                return
             fn=f'ds_fn_{name}'
         elif name in BUILTINS: fn=name
-        else: return
+        else:
+            # Раньше неизвестный вызов молча выбрасывался, и целая строка кода
+            # (например, отправка своего состояния в сеть) исчезала из сборки.
+            self._error(f"unknown function '{name}'")
+            return
         self._out(f'{fn}({", ".join(self.expr(a) for a in args)});')
     def _emit_assign(self,lhs,rhs):
         m=_LHS_RE.match(lhs)

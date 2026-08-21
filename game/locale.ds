@@ -79,8 +79,8 @@ if language==1; return "Загрузка..."; else if language==2; return "読�
 function tr_no_data
 if language==1; return "Нет данных"; else if language==2; return "データなし"; end; return "No data";end
 function tr_disco_epilepsy
-return "Epilepsy safe"
-end
+// Раньше строка была только на английском, даже в русском и японском меню.
+if language==1; return "Без мигания"; else if language==2; return "てんめつオフ"; end; return "Epilepsy safe";end
 function tr_mode_on
 if language==1; return "вкл"; else if language==2; return "オン"; end; return "on";end
 function tr_mode_off
@@ -100,11 +100,11 @@ if language==1; return "Азум"; else if language==2; return "アズム"; end;
 function tr_class_ordinary_desc
 if language==1; return "Стандартный боец"; else if language==2; return "ふつうのせんし"; end; return "Standard fighter";end
 function tr_class_azum_desc
-if language==1; return "Возрождение 1 раз за игру"; else if language==2; return "1試合に1回復活"; end; return "Revive once per match";end
+if language==1; return "Одно возрождение за бой"; else if language==2; return "1試合に1回復活"; end; return "Revive once per match";end
 function tr_class_santa
 if language==1; return "Дед Мороз"; else if language==2; return "サンタ"; end; return "Santa";end
 function tr_class_santa_desc
-if language==1; return "Посох бьёт сильнее и морозит"; else if language==2; return "杖は強く氷らせる"; end; return "Staff hits harder and freezes";end
+if language==1; return "Посох бьёт сильнее и замораживает"; else if language==2; return "杖は強く氷らせる"; end; return "The staff hits harder and freezes";end
 function tr_super
 if language==1; return "Подарок"; else if language==2; return "プレゼント"; end; return "Gift";end
 function tr_class_selected
@@ -118,13 +118,15 @@ if language==1; return "Уровни"; else if language==2; return "レベル"; 
 function tr_level
 if language==1; return "Уровень"; else if language==2; return "レベル"; end; return "Level";end
 function tr_level_absorb
-if language==1; return "Поглощение урона"; else if language==2; return "ダメージ吸収"; end; return "Damage absorb";end
+if language==1; return "Поглощение урона"; else if language==2; return "ダメージ吸収"; end; return "Damage absorption";end
 function tr_level_unlock
 if language==1; return "Открыть за"; else if language==2; return "アンロック"; end; return "Unlock for";end
 function tr_cups_unit
 if language==1; return "кубков"; else if language==2; return "カップ"; end; return "cups";end
+function tr_candies_unit
+if language==1; return "леденцов"; else if language==2; return "キャンディ"; end; return "candies";end
 function tr_level_locked
-if language==1; return "Сначала откройте предыдущий"; else if language==2; return "まえのレベルがひつよう"; end; return "Unlock the previous level first";end
+if language==1; return "Сначала откройте предыдущий уровень"; else if language==2; return "まえのレベルがひつよう"; end; return "Unlock the previous level first";end
 function tr_level_need_cups
 if language==1; return "Не хватает кубков для уровня"; else if language==2; return "カップが足りません"; end; return "Not enough cups for this level";end
 function tr_levels_soon
@@ -132,13 +134,73 @@ if language==1; return "Скоро!"; else if language==2; return "近日公開!
 function tr_cups
 if language==1; return "Кубки"; else if language==2; return "カップ"; end; return "Cups";end
 function tr_buy_for num cost, str currency
+// Единица валюты приходит в родительном падеже и со строчной буквы:
+// «Купить за 100 леденцов», «Buy for 100 candies».
 str out=""
-if language==1; out="Купить · "+cost+" "+currency
-else if language==2; out="買う · "+cost+" "+currency
-else; out="Buy · "+cost+" "+currency; end
+if language==1; out="Купить за "+cost+" "+currency
+else if language==2; out=cost+currency+"で買う"
+else; out="Buy for "+cost+" "+currency; end
 return out
 end
 function tr_class_need_cups
 if language==1; return "Не хватает кубков"; else if language==2; return "カップが足りない"; end; return "Not enough cups";end
+function tr_class_need_candies
+if language==1; return "Не хватает леденцов"; else if language==2; return "キャンディが足りない"; end; return "Not enough candies";end
 function tr_cups_reward
 if language==1; return "+5 кубков"; else if language==2; return "+5カップ"; end; return "+5 cups";end
+function tr_hello
+if language==1; return "Привет"; else if language==2; return "こんにちは"; end; return "Hello";end
+function tr_admin
+if language==1; return "Админ"; else if language==2; return "アドミン"; end; return "Admin";end
+function tr_admin_panel
+if language==1; return "Команды"; else if language==2; return "コマンド"; end; return "Commands";end
+function tr_admin_status
+if language==1; return "Статус: администратор"; else if language==2; return "ステータス: アドミン"; end; return "Status: administrator";end
+function tr_admin_unlock
+if language==1; return "Команды администратора"; else if language==2; return "アドミンコマンド"; end; return "Admin commands";end
+function tr_admin_unlocked
+if language==1; return "ОТКРЫТО"; else if language==2; return "アンロック"; end; return "UNLOCKED";end
+function tr_admin_search
+if language==1; return "Поиск команды"; else if language==2; return "コマンドをけんさく"; end; return "Search a command";end
+function tr_admin_nothing
+if language==1; return "Ничего не найдено"; else if language==2; return "みつかりません"; end; return "Nothing found";end
+function tr_admin_only
+if language==1; return "Только для администраторов"; else if language==2; return "アドミンせんよう"; end; return "Administrators only";end
+function tr_admin_done
+if language==1; return "Готово"; else if language==2; return "かんりょう"; end; return "Done";end
+function tr_event_state
+if language==1; return "Сейчас идёт"; else if language==2; return "かいさいちゅう"; end; return "Running now";end
+function tr_event_none
+if language==1; return "Ивентов нет"; else if language==2; return "イベントなし"; end; return "No events";end
+function tr_event_disco
+if language==1; return "Ивент «Диско»"; else if language==2; return "ディスコイベント"; end; return "Disco event";end
+function tr_event_snow
+if language==1; return "Ивент «Снегопад»"; else if language==2; return "ゆきイベント"; end; return "Snowfall event";end
+function tr_event_stop
+if language==1; return "Остановить ивент"; else if language==2; return "イベントをとめる"; end; return "Stop the event";end
+function tr_event_disco_desc
+if language==1; return "Экран мигает у всех в онлайне"; else if language==2; return "オンラインぜんいんでてんめつ"; end; return "The screen flashes for everyone online";end
+function tr_event_snow_desc
+if language==1; return "Над ареной идёт снег"; else if language==2; return "アリーナにゆきがふる"; end; return "Snow falls over the arena";end
+function tr_event_stop_desc
+if language==1; return "Выключить ивенты для всех"; else if language==2; return "イベントをぜんぶオフ"; end; return "Turn every event off";end
+function tr_cmd_cups
+if language==1; return "Выдать 100 кубков"; else if language==2; return "100カップをうけとる"; end; return "Grant 100 cups";end
+function tr_cmd_candies
+if language==1; return "Выдать 100 леденцов"; else if language==2; return "100キャンディをうけとる"; end; return "Grant 100 candies";end
+function tr_cmd_classes
+if language==1; return "Открыть все классы"; else if language==2; return "ぜんクラスをアンロック"; end; return "Unlock every class";end
+function tr_cmd_levels
+if language==1; return "Открыть все уровни"; else if language==2; return "ぜんレベルをアンロック"; end; return "Unlock every level";end
+function tr_cmd_reset
+if language==1; return "Сбросить прогресс"; else if language==2; return "しんちょくをリセット"; end; return "Reset the progress";end
+function tr_cmd_cups_desc
+if language==1; return "Кубки на покупку Азума и уровней"; else if language==2; return "アズムとレベルよう"; end; return "Cups for Azum and levels";end
+function tr_cmd_candies_desc
+if language==1; return "Леденцы на покупку Деда Мороза"; else if language==2; return "サンタよう"; end; return "Candies for Santa";end
+function tr_cmd_classes_desc
+if language==1; return "Азум и Дед Мороз сразу доступны"; else if language==2; return "アズムとサンタがつかえる"; end; return "Azum and Santa become available";end
+function tr_cmd_levels_desc
+if language==1; return "Все пять уровней брони"; else if language==2; return "5つのレベルぜんぶ"; end; return "All five armour levels";end
+function tr_cmd_reset_desc
+if language==1; return "Обнулить кубки, леденцы и покупки"; else if language==2; return "ぜんぶゼロにもどす"; end; return "Zero the cups, candies and unlocks";end

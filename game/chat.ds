@@ -66,8 +66,18 @@ loop idx<total
 if yy+line_h>iy-8; idx=total
 else
 // Для новых сообщений здесь ник, для старых — короткий технический uid.
-str line=net_chat_uid(idx)+": "+net_chat_text(idx)
-text_scaled line,lx,yy,0xE0E0FF,0.5; yy=yy+line_h; idx=idx+1
+str who=net_chat_uid(idx)
+str line=who+": "+net_chat_text(idx)
+if is_admin_nick(who)==1
+// Сообщения администраторов помечаются золотой меткой перед ником.
+str tag="["+tr_admin()+"] "
+num tw=text_ink_width(tag)*0.5
+text_scaled tag,lx,yy,0xFFD54A,0.5
+text_scaled line,lx+tw,yy,0xE0E0FF,0.5
+else
+text_scaled line,lx,yy,0xE0E0FF,0.5
+end
+yy=yy+line_h; idx=idx+1
 end
 end
 end

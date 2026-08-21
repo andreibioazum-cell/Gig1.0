@@ -39,14 +39,19 @@ const char *net_leaderboard_nick(double idx);
 double net_leaderboard_cups(double idx);
 
 /* Состояние игроков. Удар — постоянное событие со счётчиком punch:
- * если счётчик изменился, удар нельзя потерять между двумя опросами сети. */
-void net_publish(double x, double y, double angle, double hp, double alive);
+ * если счётчик изменился, удар нельзя потерять между двумя опросами сети.
+ * Так же передаётся и суператака «Подарок»: счётчик gift плюс точка броска
+ * и направление, по которым соперник повторяет полёт подарка у себя. */
+void net_publish(double x, double y, double angle, double hp, double alive, double freeze);
 void net_publish_punch(double x, double y, double dx, double dy, double punch);
+void net_publish_gift(double x, double y, double dx, double dy, double gift);
 void net_set_class(double cls);
 double net_status(void);
 double net_slot(void);
 double net_count(void);
-double net_event(void); /* 1 — ивент «диско» включён, 0 — ивента нет */
+double net_event(void); /* 0 — ивента нет, 1 — «диско», 2 — снегопад */
+void net_event_fetch(const char *url); /* перечитать номер ивента из Firebase */
+void net_event_set(const char *url, double value); /* запустить ивент для всех */
 double net_player_online(double slot);
 double net_player_x(double slot);
 double net_player_y(double slot);
@@ -60,6 +65,12 @@ double net_player_punch_dx(double slot);
 double net_player_punch_dy(double slot);
 double net_player_punch(double slot);
 double net_player_class(double slot);
+double net_player_freeze(double slot);
+double net_player_gift(double slot);
+double net_player_gift_x(double slot);
+double net_player_gift_y(double slot);
+double net_player_gift_dx(double slot);
+double net_player_gift_dy(double slot);
 
 /* Прогресс игрока: кубки, леденцы, выбранный класс и купленные классы. */
 double net_load_cups(void);
