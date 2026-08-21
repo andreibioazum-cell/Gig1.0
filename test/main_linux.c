@@ -698,8 +698,23 @@ int main(void) {
     printf("=== admin panel opened for 'Dimasi4ek229' (frame %ld)\n", g_frame);
     dump_frame("admin_panel");
 
+    /* Ряд быстрых кнопок: «Диско» / «Снег» / «Выключить» (y = 168..212). */
+    do_tap(440.0f, 190.0f);
+    run_frames(10);
+    if (net_event() != 1) { printf("!! the disco button did not start the event: net_event=%g\n", net_event()); return 3; }
+    dump_frame("admin_event_disco");
+    do_tap(644.0f, 190.0f);
+    run_frames(10);
+    if (net_event() != 2) { printf("!! the snow button did not start the event: net_event=%g\n", net_event()); return 3; }
+    dump_frame("admin_event_snow");
+    do_tap(844.0f, 190.0f);
+    run_frames(10);
+    if (net_event() != 0) { printf("!! the off button did not stop the event: net_event=%g\n", net_event()); return 3; }
+    dump_frame("admin_event_off");
+    printf("=== the three event buttons switch disco/snow/off\n");
+
     /* Первая строка списка — ивент «Диско». */
-    do_tap((float)(g_w / 2), 320.0f);
+    do_tap((float)(g_w / 2), 350.0f);
     run_frames(10);
     if (net_event() != 1) { printf("!! disco event was not started: net_event=%g\n", net_event()); return 3; }
     printf("=== admin started the disco event (net_event=%g)\n", net_event());
@@ -707,7 +722,7 @@ int main(void) {
     /* Поиск фильтрует список: «СНЕГ» оставляет только снегопад (русский язык). */
     language = 1;
     run_frames(2);
-    do_tap((float)(g_w / 2), 194.0f);
+    do_tap((float)(g_w / 2), 240.0f);
     run_frames(5);
     if (!keyboard_visible()) { printf("!! tapping the search field did not open the keyboard\n"); return 3; }
     keyboard_clear();
@@ -718,7 +733,7 @@ int main(void) {
         return 3;
     }
     dump_frame("admin_search");
-    do_tap((float)(g_w / 2), 320.0f);
+    do_tap((float)(g_w / 2), 350.0f);
     run_frames(10);
     if (net_event() != 2) { printf("!! filtered row did not start the snow event: net_event=%g\n", net_event()); return 3; }
     printf("=== case-insensitive search left the snowfall command and started it\n");

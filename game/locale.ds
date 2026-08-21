@@ -178,6 +178,12 @@ function tr_event_snow
 if language==1; return "Ивент «Снегопад»"; else if language==2; return "ゆきイベント"; end; return "Snowfall event";end
 function tr_event_stop
 if language==1; return "Остановить ивент"; else if language==2; return "イベントをとめる"; end; return "Stop the event";end
+function tr_event_btn_disco
+if language==1; return "Диско"; else if language==2; return "ディスコ"; end; return "Disco";end
+function tr_event_btn_snow
+if language==1; return "Снег"; else if language==2; return "ゆき"; end; return "Snow";end
+function tr_event_btn_off
+if language==1; return "Выключить"; else if language==2; return "オフ"; end; return "Off";end
 function tr_event_disco_desc
 if language==1; return "Экран мигает у всех в онлайне"; else if language==2; return "オンラインぜんいんでてんめつ"; end; return "The screen flashes for everyone online";end
 function tr_event_snow_desc
