@@ -703,7 +703,6 @@ ctext tr_tap_to_return(),y+132,0xFFCDD2
 end
 function draw_game
 draw_grass
-draw_snow
 draw_field
 draw_candies
 draw_gift; draw_boom
@@ -712,6 +711,7 @@ num ehw=25*cube_scale*enemy_scale, es=cube_scale*enemy_scale
 if enemy.state==1||enemy.state==2; tex enemy.x-ehw,enemy.y-ehw,PUNCH_TEX,sprite_a(enemy.angle),es
 else; tex enemy.x-ehw,enemy.y-ehw,ORDINARY_TEX,sprite_a(enemy.angle),es; end
 draw_freeze
+draw_snow
 num w=screen_w/4
 hud_bar 20,20,w,28,player.hp,player.max_hp,0x7ED321,0; hud_bar screen_w-w-20,20,w,28,enemy.hp,enemy.max_hp,0xE94560,1
 draw_controls
@@ -730,15 +730,59 @@ function hash01 num i
 num v=sin(i*127.1+11.7)*43758.5453
 return v-floor(v)
 end
+function frac01 num v
+// Дробная часть — ей закольцовываем падение и снос по экрану.
+return v-floor(v)
+end
+function draw_flake num cx, num cy, num r, num rot, num alpha
+// Настоящая снежинка по формуле: шестилучевая симметрия (три диаметра через
+// 60°), на каждом луче пара боковых веточек под тем же углом 60° и маленькое
+// ядро в центре. Всё считается от одного угла rot, поэтому снежинка ещё и
+// медленно вращается в полёте.
+num a=alpha
+if a<0; a=0; end
+if a>255; a=255; end
+num c=((((unsigned)(int)a)<<24)|0x00EAF6FF)
+if r<4.2
+// Дальние снежинки мельче пикселя кристалла — рисуем крупинкой.
+circle cx,cy,r*0.85,c
+return
+end
+num step=pi/3, th=1+r*0.13
+num i=0
+loop i<3
+num a1=rot+i*step, dx=cos(a1)*r, dy=sin(a1)*r
+line cx-dx,cy-dy,cx+dx,cy+dy,th,c
+i=i+1
+end
+i=0
+loop i<6
+num aa=rot+i*step, ux=cos(aa), uy=sin(aa)
+num bx=cx+ux*r*0.54, by=cy+uy*r*0.54, bl=r*0.36
+line bx,by,bx+cos(aa+step)*bl,by+sin(aa+step)*bl,th*0.8,c
+line bx,by,bx+cos(aa-step)*bl,by+sin(aa-step)*bl,th*0.8,c
+num tx=cx+ux*r*0.82, ty=cy+uy*r*0.82, tl=r*0.2
+line tx,ty,tx+cos(aa+step)*tl,ty+sin(aa+step)*tl,th*0.7,c
+line tx,ty,tx+cos(aa-step)*tl,ty+sin(aa-step)*tl,th*0.7,c
+i=i+1
+end
+circle cx,cy,r*0.2,c
+end
 function draw_snow
 if event_mode!=2; return; end
+num span_y=screen_h+140, span_x=screen_w+120
 num i=0
 loop i<event_flakes
-num rx=hash01(i), ry=hash01(i+91), rs=hash01(i+37)
-num yy=ry*screen_h+event_t*(40+rs*90)
-yy=yy-floor(yy/screen_h)*screen_h
-num xx=rx*screen_w+sin(event_t*0.8+i)*14
-circle xx,yy,2+rs*3,0xBBFFFFFF
+num h1=hash01(i), h2=hash01(i+91), h3=hash01(i+37), h4=hash01(i+153)
+// depth — «слой» снежинки: ближние крупнее, быстрее, ярче и заметнее качаются.
+num depth=0.3+0.7*h3
+num r=3+11*depth
+num yy=h2*span_y+event_t*(46+92*depth)
+yy=frac01(yy/span_y)*span_y-70
+num sway=(14+26*h4)*sin(event_t*(0.55+0.9*h1)+h1*2*pi)
+num xx=h1*span_x+sway+event_t*22*depth
+xx=frac01(xx/span_x)*span_x-60
+draw_flake xx,yy,r,h4*2*pi+event_t*(0.3+0.55*h1),85+165*depth
 i=i+1
 end
 end
@@ -758,7 +802,7 @@ if event_mode==1&&disco_safe==0; disco_t=disco_t+dt; else; disco_t=0; end
 end
 function draw_online
 draw_grass
-draw_disco; draw_snow
+draw_disco
 draw_field
 if player.freeze>0; draw_freeze_box player.x,player.y,player.size+5; end
 draw_gift; draw_boom; draw_remote_gifts
@@ -798,6 +842,7 @@ end
 end
 i=i+1
 end
+draw_snow
 num w=screen_w/3
 hud_bar 20,20,w,28,player.hp,player.max_hp,0x7ED321,0
 draw_controls; draw_chat

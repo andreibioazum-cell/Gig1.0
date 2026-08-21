@@ -496,6 +496,32 @@ int main(void) {
     run_frames(40);
     printf("=== solo battle ok (frame %ld)\n", g_frame);
 
+    /* Снегопад: рисуем настоящие кристаллы, замеряем стоимость кадра. */
+    {
+        char url[192];
+        struct timeval t0, t1;
+        double ms;
+        double base_ms;
+        snprintf(url, sizeof(url), "http://127.0.0.1:%d", TEST_PORT);
+        gettimeofday(&t0, NULL);
+        run_frames(60);
+        gettimeofday(&t1, NULL);
+        base_ms = ((double)(t1.tv_sec - t0.tv_sec) * 1000.0 + (double)(t1.tv_usec - t0.tv_usec) / 1000.0) / 60.0;
+        printf("=== battle frame without the event: %.2f ms\n", base_ms);
+        net_event_set(url, 2);
+        run_frames(20);
+        if (event_mode != 2) { printf("!! snowfall event did not reach the battle (event_mode=%g)\n", event_mode); return 3; }
+        gettimeofday(&t0, NULL);
+        run_frames(60);
+        gettimeofday(&t1, NULL);
+        ms = ((double)(t1.tv_sec - t0.tv_sec) * 1000.0 + (double)(t1.tv_usec - t0.tv_usec) / 1000.0) / 60.0;
+        dump_frame("solo_snow");
+        printf("=== snowfall event on: %.2f ms per frame at %dx%d\n", ms, g_w, g_h);
+        if (ms > 16.0) { printf("!! snowfall is too heavy for 60 fps: %.2f ms per frame\n", ms); return 3; }
+        net_event_set(url, 0);
+        run_frames(10);
+    }
+
     {
         double *e = (double *)enemy;
         double *pl = (double *)player;

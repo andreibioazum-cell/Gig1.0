@@ -42,7 +42,7 @@ str GRASS="grass.png", ORDINARY_TEX="ordinary.png", PUNCH_TEX="ordinary_punch.pn
 // disco_safe=1 — безопасный для эпилептиков режим (мигание выключено),
 // disco_t — таймер для плавной смены цветов, event_t — общий таймер ивента
 // (идёт всегда, по нему падает снег).
-num event_mode=0, disco_safe=0, disco_t=0, event_t=0, event_flakes=64
+num event_mode=0, disco_safe=0, disco_t=0, event_t=0, event_flakes=44
 // Классы: player_class 0 = Обычный, 1 = Азум (одно возрождение за бой).
 // azum_revived — уже тратили воскрешение, revive_prot — неуязвимость после
 // возрождения. Вспышки на экране нет: Азум просто встаёт в случайной точке.
